@@ -1,0 +1,15 @@
+timestamp,document_name,model_used,total_processing_time_s,text_size_chars,llm_generation_time_s,tokens_generated,avg_tokens_per_sec,A score
+2026-03-12T11:06:36.091714,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,qwen2.5-coder:7b,450.39,10437,449.32,4882,10.87,
+2026-03-12T11:10:17.915117,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,gemma2:2b,218.22,10437,217.03,10936,50.39,
+2026-03-12T11:12:36.932300,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,gnokit/improve-grammar:latest,135.12,10437,133.96,7075,52.81,
+2026-03-12T11:30:07.481785,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,qwen2.5-coder:1.5b-base,1046.71,10437,1045.74,81527,77.96,
+2026-03-12T12:07:22.936430,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,llama3.1:8b,2231.64,10437,2230.59,24084,10.8,
+2026-03-12T12:34:17.092150,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,qwen2.5:14b-instruct,1611.01,10437,1609.83,6578,4.09,
+2026-03-12T12:37:07.423959,https___leai.learnexperts.ca_share_f7ce9f67-a896-4108-9367-25611e67f1c9.mhtml,gemma3:1b,166.95,10437,165.49,9836,59.44,
+2026-03-15T11:33:18.585904,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,qwen2.5-coder:7b,465.92,9904,465.45,5288,11.36
+2026-03-15T11:38:03.559624,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,gemma2:2b,281.63,9904,281.01,14414,51.29
+2026-03-15T11:41:02.116536,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,gnokit/improve-grammar:latest,175.09,9904,174.53,9487,54.36
+2026-03-15T11:59:45.008690,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,qwen2.5-coder:1.5b-base,1119.49,9904,1118.97,88497,79.09
+2026-03-15T12:38:11.837441,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,llama3.1:8b,2303.49,9904,2302.86,26688,11.59
+2026-03-15T13:04:52.501389,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,qwen2.5:14b-instruct,1597.54,9904,1597.00,6457,4.04
+2026-03-15T13:08:33.989454,https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml,gemma3:1b,218.34,9904,217.65,12555,57.69

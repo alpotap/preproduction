@@ -1,0 +1,7 @@
+openai
+python-docx
+beautifulsoup4
+selenium
+requests
+svglib
+reportlab
