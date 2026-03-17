@@ -6,10 +6,12 @@ from datetime import datetime
 from openai import OpenAI
 
 from utils import load_config, save_config, log_performance_stats
-from content_extractor import get_content_from_docx, get_content_from_mhtml
-from document_processor import create_docx_output
+from document_processor import process_docx
 from web_tools import download_url_as_mhtml
-
+try:
+    from convert import mhtml_to_docx
+except (ImportError, ModuleNotFoundError):
+    mhtml_to_docx = None
 
 def select_model(client, default_model):
     """Lists available Ollama models and lets the user select one."""
@@ -243,63 +245,76 @@ def main():
 def process_files(files_to_process, config, client, workspace_dir, source_type_override=None):
     """Loops through a list of files and processes them."""
     output_dir = workspace_dir / config['output_dir']
-    image_output_dir = output_dir / 'images'
-    image_output_dir.mkdir(exist_ok=True)
 
     for file_path in files_to_process:
         print(f"\n--- Processing: {file_path.name} ---")
         doc_start_time = time.time()
-        content = None
+        
+        processing_file_path = file_path
         source_type = source_type_override or file_path.suffix.lower().strip('.')
         
-        if source_type == 'docx':
-            content = get_content_from_docx(file_path)
-        elif source_type == 'mhtml':
-            content = get_content_from_mhtml(file_path, image_output_dir)
+        if source_type == 'mhtml':
+            if mhtml_to_docx is None:
+                print("  [!] MHTML to DOCX conversion is unavailable.")
+                print("      This feature requires 'pywin32' (Windows only) and MS Word.")
+                print("      To install, run: pip install pywin32")
+                print(f"      Skipping file: {file_path.name}")
+                continue
 
-        if content:
-            stats = {} # initialize
-            output_path = output_dir / f"{file_path.stem}_corrected.docx"
-            stats = create_docx_output(content, config, client, output_path)
-            
-            doc_end_time = time.time()
-            total_doc_time = doc_end_time - doc_start_time
-            
-            model_used = config['llm_model']
-            total_text_size = stats.get('total_text_size', 0)
-            total_tokens_generated = stats.get('total_tokens_generated', 0)
-            total_llm_time = stats.get('total_llm_time', 0)
-            tokens_per_second = (total_tokens_generated / total_llm_time) if total_llm_time > 0 else 0
-            
-            print("\n--- Processing Summary ---")
-            print(f"  Document:              {file_path.name}")
-            print(f"  Total processing time: {total_doc_time:.2f} seconds")
-            print(f"  Text size processed:   {total_text_size} characters")
-            print(f"  Model used:            {model_used}")
-            print(f"  LLM generation time:   {total_llm_time:.2f} seconds")
-            print(f"  Tokens generated:      {total_tokens_generated}")
-            print(f"  Average tokens/sec:    {tokens_per_second:.2f}")
-
-            # Log performance stats to CSV
+            print(f"  -> Converting MHTML to DOCX using MS Word...")
+            converted_docx_path = file_path.with_suffix('.from_mhtml.docx')
             try:
-                log_data = {
-                    'timestamp': datetime.now().isoformat(),
-                    'document_name': file_path.name,
-                    'model_used': model_used,
-                    'total_doc_time': total_doc_time,
-                    'total_text_size': total_text_size,
-                    'total_llm_time': total_llm_time,
-                    'total_tokens_generated': total_tokens_generated,
-                    'tokens_per_second': tokens_per_second
-                }
-                log_file = output_dir / "performance_log.csv"
-                log_performance_stats(log_file, log_data)
-                print(f"  Performance stats logged to: {log_file.name}")
+                mhtml_to_docx(str(file_path), str(converted_docx_path))
+                processing_file_path = converted_docx_path
+                print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
             except Exception as e:
-                print(f"  [!] Could not write to performance log: {e}")
-            print("--------------------------")
-        else:
-            print(f"Could not extract content from {file_path.name}. Skipping.")
+                print(f"  [!] MHTML to DOCX conversion failed: {e}")
+                print(f"      Ensure MS Word is installed and 'win32com' is working.")
+                print(f"      Skipping file: {file_path.name}")
+                continue
+
+        # Process the DOCX file directly
+        stats = {} # initialize
+        output_path = output_dir / f"{file_path.stem}_corrected.docx"
+        
+        stats = process_docx(str(processing_file_path), str(output_path), config, client)
+        
+        doc_end_time = time.time()
+        total_doc_time = doc_end_time - doc_start_time
+        
+        model_used = config['llm_model']
+        total_text_size = stats.get('total_text_size', 0)
+        total_tokens_generated = stats.get('total_tokens_generated', 0)
+        total_llm_time = stats.get('total_llm_time', 0)
+        tokens_per_second = (total_tokens_generated / total_llm_time) if total_llm_time > 0 else 0
+        
+        print("\n--- Processing Summary ---")
+        print(f"  Document:              {file_path.name}")
+        print(f"  Total processing time: {total_doc_time:.2f} seconds")
+        print(f"  Text size processed:   {total_text_size} characters")
+        print(f"  Model used:            {model_used}")
+        print(f"  LLM generation time:   {total_llm_time:.2f} seconds")
+        print(f"  Tokens generated:      {total_tokens_generated}")
+        print(f"  Average tokens/sec:    {tokens_per_second:.2f}")
+
+        # Log performance stats to CSV
+        try:
+            log_data = {
+                'timestamp': datetime.now().isoformat(),
+                'document_name': file_path.name,
+                'model_used': model_used,
+                'total_doc_time': total_doc_time,
+                'total_text_size': total_text_size,
+                'total_llm_time': total_llm_time,
+                'total_tokens_generated': total_tokens_generated,
+                'tokens_per_second': tokens_per_second
+            }
+            log_file = output_dir / "performance_log.csv"
+            log_performance_stats(log_file, log_data)
+            print(f"  Performance stats logged to: {log_file.name}")
+        except Exception as e:
+            print(f"  [!] Could not write to performance log: {e}")
+        print("--------------------------")
 
 if __name__ == "__main__":
     main()

@@ -21,15 +21,20 @@ Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: default
-LLM Model: qwen2.5:14b-instruct
+LLM Model: gpt-oss:20b-cloud
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
 
 ## Usage Flow
 
 1.  **Setup**:
+    -   Clone the repository:
+        ```shell
+        git clone <repository_url>
+        cd spell_check_grammar
+        ```
     -   Ensure Python 3.9+ and all required libraries are installed (see `Requirements` section).
-    -   Make sure your local Ollama instance is running and has the desired model pulled (e.g., `ollama pull qwen2.5:14b-instruct`).
+    -   Make sure your local Ollama instance is running and has the desired model pulled (e.g., `ollama pull gpt-oss:20b-cloud`).
 
 2.  **Prepare Input Files**:
     -   Place `.docx` or previously downloaded `.mhtml` files into the `input/` directory.

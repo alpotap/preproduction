@@ -5,3 +5,4 @@ selenium
 requests
 svglib
 reportlab
+pywin32

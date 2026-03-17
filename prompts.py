@@ -11,7 +11,7 @@ Strict Constraints:
 • NO anthropomorphic language.
 • ENSURE the output is a single, complete, and valid JSON list with no truncation.
 
-Output ONLY a JSON list: [{{"original": "exact text match from input", "corrected": "new text", "explanation": "Brief description of the specific change (e.g., 'Added comma', 'Fixed spelling')"}}].
+Output ONLY a JSON list of objects. Example: [{{"original": "text", "corrected": "text", "explanation": "reason"}}, {{"original": "text", "corrected": "text", "explanation": "reason"}}].
 Return [] if no errors.
 
 Text: {text}
