@@ -64,12 +64,6 @@ def apply_corrections_to_batch(batch_items, config, client, stats):
             last_end = end
         para.add_run(block_content[last_end:])
 
-def has_image(para):
-    """Checks if a paragraph contains image XML elements."""
-    # This heuristic checks for standard Word drawing/picture namespaces
-    xml = para._p.xml
-    return 'w:drawing' in xml or 'w:pict' in xml
-
 def process_docx(input_path, output_path, config, client):
     """Loads a DOCX, corrects text in-place (preserving images), and saves to output_path."""
     print(f"Loading document: {input_path}")
@@ -90,15 +84,6 @@ def process_docx(input_path, output_path, config, client):
         if not text:
             continue
             
-        # Skip paragraphs that contain images to ensure we don't accidentally delete them
-        if has_image(para):
-            # If we have a pending batch, process it before skipping
-            if current_batch:
-                apply_corrections_to_batch(current_batch, config, client, stats)
-                current_batch = []
-                current_word_count = 0
-            continue
-
         # Add to batch
         if current_word_count + len(text.split()) > 500 and current_batch:
             apply_corrections_to_batch(current_batch, config, client, stats)

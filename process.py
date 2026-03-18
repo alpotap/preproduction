@@ -130,12 +130,6 @@ def prompt_and_download_urls(workspace_dir):
 
     print(f"Found {len(urls)} URL(s) to process.")
     for url in urls:
-        filename = re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
-        mhtml_path = mhtml_output_dir / filename
-        if mhtml_path.exists():
-            print(f"Skipping download for '{url}', file already exists: {mhtml_path.name}")
-            continue
-        
         download_url_as_mhtml(url, mhtml_output_dir)
 
 def run_interactive_wizard():

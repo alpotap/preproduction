@@ -63,15 +63,29 @@ def extract_text_from_web(url):
         print(f"Error fetching web content: {e}")
         return []
 
-def save_mhtml(url, mhtml_path):
+def save_mhtml(url, output_dir):
     try:
         service = Service()
         driver = webdriver.Edge(service=service)
         driver.get(url)
         time.sleep(25)
+        
+        # Attempt to extract H1 for filename
+        try:
+            h1_text = driver.find_element("tag name", "h1").text.strip()
+            filename = re.sub(r'[^\w\-_.]', '_', h1_text) + '.mhtml' if h1_text else re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
+        except Exception:
+            filename = re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
+
+        mhtml_path = output_dir / filename
+        if mhtml_path.exists():
+            print(f"Skipping {url}, file already exists as {filename}")
+            driver.quit()
+            return
+
         mhtml_data = driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})['data']
         driver.quit()
-        mhtml_path.parent.mkdir(exist_ok=True)
+        mhtml_path.parent.mkdir(exist_ok=True, parents=True)
         with open(mhtml_path, "w", encoding="utf-8") as f:
             f.write(mhtml_data)
         print(f"MHTML saved to {mhtml_path}")
@@ -168,12 +182,7 @@ def main():
         with open(urls_file, 'r', encoding='utf-8') as f:
             urls = [line.strip() for line in f if line.strip()]
         for url in urls:
-            filename = re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
-            mhtml_path = output_mhtml_dir / filename
-            if mhtml_path.exists():
-                print(f"Skipping {url}, file already exists.")
-                continue
-            save_mhtml(url, mhtml_path)
+            save_mhtml(url, output_mhtml_dir)
     elif args.mode == 'process':
         client = OpenAI(base_url="http://localhost:11434/v1", api_key="not-needed")
         for mhtml_file in output_mhtml_dir.glob('*.mhtml'):
@@ -189,12 +198,7 @@ def main():
         with open(urls_file, 'r', encoding='utf-8') as f:
             urls = [line.strip() for line in f if line.strip()]
         for url in urls:
-            filename = re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
-            mhtml_path = output_mhtml_dir / filename
-            if mhtml_path.exists():
-                print(f"Skipping {url}, file already exists.")
-                continue
-            save_mhtml(url, mhtml_path)
+            save_mhtml(url, output_mhtml_dir)
         # Then process all
         client = OpenAI(base_url="http://localhost:11434/v1", api_key="not-needed")
         for mhtml_file in output_mhtml_dir.glob('*.mhtml'):
