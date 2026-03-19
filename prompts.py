@@ -1,32 +1,32 @@
-PROMPTS = {
-    "default": """
-Copy edit this {language} text segment (which may contain multiple paragraphs) using Microsoft Style Guide principles.
-
-Tasks:
-• Minimal corrections: spelling, grammar, punctuation, active voice.
-
+# Shared components for prompts
+CONSTRAINTS = """
 Strict Constraints:
 • DO NOT rewrite, rephrase, expand, or change meaning.
 • PRESERVE abbreviations, proper nouns, and technical terms (e.g., "/opt", "/usr/bin", "API key", "localhost").
-• NO anthropomorphic language.
-• ENSURE the output is a single, complete, and valid JSON list with no truncation.
+• NO anthropomorphic language."""
 
-Output ONLY a JSON list of objects. Example: [{{"original": "text", "corrected": "text", "explanation": "reason"}}, {{"original": "text", "corrected": "text", "explanation": "reason"}}].
-Return [] if no errors.
+JSON_OUTPUT_INSTRUCTIONS = """
+Output ONLY a JSON list of objects. 
+Example: [{{"explanation": "reason", "original": "text", "corrected": "text"}}].
+Return [] if no errors."""
 
-Text: {text}
+PROMPTS = {
+    "default": f"""
+Copy edit this {{language}} text segment (which may contain multiple paragraphs) using Microsoft Style Guide principles.
+
+Tasks:
+• Minimal corrections: spelling, grammar, punctuation, active voice.
+{CONSTRAINTS}
+{JSON_OUTPUT_INSTRUCTIONS}
+
+Text: {{text}}
 """,
-    "grammar_only": """
-Check this {language} text for objective spelling, grammar, and punctuation errors only.
+    "grammar_only": f"""
+Check this {{language}} text for objective spelling, grammar, and punctuation errors only.
 Do not offer stylistic improvements or voice changes.
+{CONSTRAINTS}
+{JSON_OUTPUT_INSTRUCTIONS}
 
-Strict Constraints:
-• DO NOT rewrite, rephrase, expand, or change meaning.
-• PRESERVE abbreviations, proper nouns, and technical terms.
-
-Output ONLY a JSON list: [{{"original": "exact text match", "corrected": "new text", "explanation": "Grammar/Spelling error"}}].
-Return [] if no errors.
-
-Text: {text}
+Text: {{text}}
 """
 }

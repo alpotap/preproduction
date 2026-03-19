@@ -21,7 +21,7 @@ Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: default
-LLM Model: gpt-oss:20b-cloud
+LLM Model: gpt-oss:120b-cloud
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
 
@@ -69,6 +69,7 @@ The script uses the following rules when sending text to the AI model. These ins
 > **STRICT RULES — DO NOT VIOLATE:**
 > - Do NOT rewrite, rephrase, expand, shorten, or change the meaning or style.
 > - Do NOT change abbreviations (e.g., "etc.", "e.g.", "i.e.", "ASAP", "API").
+> - Do NOT change heading capitalization to Title Case. Keep headings in sentence case (e.g., "Course description" not "Course Description").
 > - Do NOT replace technical terms, filenames, directory names, or paths. Examples: "Home directory", "/opt", "/usr/bin", "PATH", "API key", "SFTP", "localhost".
 > - Do NOT replace proper nouns, usernames, project names, product names, or brand names.
 > - Do NOT rewrite code, commands, arguments, flags, or configuration values.

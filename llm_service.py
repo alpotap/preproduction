@@ -31,23 +31,20 @@ def get_corrections_from_llm(text, config, client):
             completion_tokens = response.usage.completion_tokens if response.usage else 0
             content = response.choices[0].message.content.strip()
 
-            # Clean the response: extract content from markdown code blocks if present
-            if content.startswith("```json"):
-                content = content[7:].strip()
-            elif content.startswith("```"):
-                content = content[3:].strip()
-            if content.endswith("```"):
-                content = content[:-3].strip()
-
-            # Find the start and end of the JSON array.
-            json_start_index = content.find('[')
-            json_end_index = content.rfind(']')
-
-            if json_start_index == -1 or json_end_index == -1 or json_end_index < json_start_index:
-                raise ValueError("Could not find a valid JSON array structure in the response.")
-
-            # Extract the potential JSON string
-            json_str_to_decode = content[json_start_index : json_end_index + 1]
+            # More robustly find JSON, even if it's embedded in conversation
+            json_str_to_decode = ""
+            json_match = re.search(r'```(?:json)?\s*(\[.*\])\s*```', content, re.DOTALL)
+            if json_match:
+                json_str_to_decode = json_match.group(1)
+            else:
+                # Fallback to finding the raw array if no markdown block is found
+                json_start_index = content.find('[')
+                json_end_index = content.rfind(']')
+                if json_start_index != -1 and json_end_index != -1 and json_end_index > json_start_index:
+                    json_str_to_decode = content[json_start_index : json_end_index + 1]
+                else:
+                    # If we can't find a JSON block or array, the response is invalid.
+                    raise ValueError("Could not find a valid JSON array in the LLM response.")
             
             # Attempt to fix common JSON syntax errors from LLMs
             json_str_to_decode = re.sub(r'}\s*{', '}, {', json_str_to_decode) # Fix missing comma between objects
