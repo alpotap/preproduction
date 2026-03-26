@@ -21,6 +21,7 @@ Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: default
+LLM Provider: ollama
 LLM Model: gpt-oss:120b-cloud
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
@@ -47,7 +48,7 @@ LLM Max Tokens: 8000
     ```
 4.  **Follow the Wizard Prompts**:
     -   **Download**: If `urls.txt` is found, you'll be asked if you want to download the web pages. They will be saved as `.mhtml` files in the `input/` directory.
-    -   **Model Selection**: Choose which Ollama model to use for the corrections. Your last choice is the default.
+    -   **Model Selection**: Choose which model to use for corrections. You can select local Ollama models or `gpt-5-mini (GitHub)`.
     -   **File Selection**: Choose which documents from the `input/` directory you want to process.
 
 5.  **Review Output**:

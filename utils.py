@@ -12,6 +12,7 @@ def load_config():
         'highlight_corrections': True,
         'add_comments': True,
         'active_prompt': 'default',
+        'llm_provider': 'ollama',
         'llm_model': 'local-model',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
