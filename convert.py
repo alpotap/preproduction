@@ -12,15 +12,24 @@ def mhtml_to_docx(input_path, output_path=None, visible=False):
     # Word constants
     wdFormatXMLDocument = 12  # .docx
 
-    word = win32.gencache.EnsureDispatch("Word.Application")
+    # Use an isolated Word instance so we do not attach to/close user-open Word windows.
+    word = win32.DispatchEx("Word.Application")
     word.Visible = visible
+    doc = None
     try:
         doc = word.Documents.Open(input_path)
         doc.SaveAs(output_path, FileFormat=wdFormatXMLDocument)
-        doc.Close(False)
         print(f"Saved: {output_path}")
     finally:
-        word.Quit()
+        if doc is not None:
+            try:
+                doc.Close(False)
+            except Exception:
+                pass
+        try:
+            word.Quit()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

@@ -20,10 +20,33 @@ GITHUB_MODEL = "gpt-5-mini"
 GITHUB_BASE_URL = "https://models.inference.ai.azure.com/v1"
 
 
+def get_github_token():
+    """Gets GitHub token from process env, then Windows user env registry as fallback."""
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    if token:
+        return token
+
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as env_key:
+                for token_key in ("GITHUB_TOKEN", "GH_TOKEN"):
+                    try:
+                        value, _ = winreg.QueryValueEx(env_key, token_key)
+                        if value:
+                            return value
+                    except FileNotFoundError:
+                        continue
+        except Exception:
+            pass
+
+    return None
+
+
 def create_client(provider):
     """Creates an OpenAI-compatible client for the selected provider."""
     if provider == GITHUB_PROVIDER:
-        github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+        github_token = get_github_token()
         if not github_token:
             raise RuntimeError("Missing GITHUB_TOKEN (or GH_TOKEN) for GitHub Models.")
         return OpenAI(base_url=GITHUB_BASE_URL, api_key=github_token)
@@ -173,18 +196,19 @@ def run_interactive_wizard():
     prompt_and_download_urls(workspace_dir)
 
     # 1. Select model and connect to provider
+    selected_provider = config.get('llm_provider', OLLAMA_PROVIDER)
     try:
         selected_provider, selected_model = select_model(
             config['llm_model'],
             config.get('llm_provider', OLLAMA_PROVIDER)
         )
-        client = create_client(selected_provider)
         config['llm_provider'] = selected_provider
         config['llm_model'] = selected_model
+        client = create_client(selected_provider)
         print(f"Using model: {config['llm_model']}")
     except Exception as e:
-        print(f"\nError: Could not initialize {config.get('llm_provider', OLLAMA_PROVIDER)} client: {e}")
-        if config.get('llm_provider', OLLAMA_PROVIDER) == OLLAMA_PROVIDER:
+        print(f"\nError: Could not initialize {selected_provider} client: {e}")
+        if selected_provider == OLLAMA_PROVIDER:
             print("Please ensure Ollama is running.")
         else:
             print("Please set GITHUB_TOKEN (or GH_TOKEN) for GitHub Models.")
