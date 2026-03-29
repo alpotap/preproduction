@@ -1,11 +1,7 @@
 import os
 import re
-import json
-import subprocess
-import sys
 from pathlib import Path
 from openai import OpenAI
-import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.edge.service import Service
@@ -14,54 +10,6 @@ from email import message_from_string
 import argparse
 from utils import load_config
 from llm_service import get_corrections_from_llm
-
-def install_package(package):
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-    except subprocess.CalledProcessError:
-        print(f"Failed to install {package}")
-
-# Auto-install dependencies removed due to syntax issues
-    pass
-
-def extract_text_from_web(url):
-    try:
-        # Use Edge WebDriver for JS support
-        service = Service()  # assumes msedgedriver.exe in PATH
-        driver = webdriver.Edge(service=service)
-        driver.get(url)
-        time.sleep(15)  # wait for JS to load content
-        # Capture MHTML snapshot
-        mhtml_data = driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})['data']
-        driver.quit()
-        # Save MHTML
-        mhtml_path = Path(__file__).parent / "input" / "page.mhtml"
-        mhtml_path.parent.mkdir(exist_ok=True)
-        with open(mhtml_path, "w", encoding="utf-8") as f:
-            f.write(mhtml_data)
-        print(f"MHTML saved to {mhtml_path}")
-        # Parse MHTML to extract HTML
-        msg = message_from_string(mhtml_data)
-        html_content = None
-        for part in msg.walk():
-            if part.get_content_type() == 'text/html':
-                html_content = part.get_payload(decode=True).decode('utf-8')
-                break
-        if not html_content:
-            return []
-        soup = BeautifulSoup(html_content, 'html.parser')
-        # Extract structured content
-        structured_content = []
-        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li']):
-            text = element.get_text().strip()
-            if text:
-                tag = element.name
-                structured_content.append({'type': tag, 'text': text})
-        print(f"Extracted {len(structured_content)} structured elements")
-        return structured_content
-    except Exception as e:
-        print(f"Error fetching web content: {e}")
-        return []
 
 def save_mhtml(url, output_dir):
     try:

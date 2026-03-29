@@ -2,7 +2,7 @@ import difflib
 import copy
 from lxml import etree
 from docx import Document
-from docx.shared import RGBColor, Inches
+from docx.shared import RGBColor
 from docx.oxml.ns import qn
 from llm_service import get_corrections_from_llm
 
@@ -50,6 +50,44 @@ def _insert_blank_line_before_images(doc):
             inserted_count += 1
 
     return inserted_count
+
+
+def _preserve_soft_breaks(original_text, corrected_text):
+    """Reinsert original soft line breaks (Shift+Enter) if the correction dropped them."""
+    break_char = "\n"
+    original_breaks = original_text.count(break_char)
+    if original_breaks == 0:
+        return corrected_text
+    if corrected_text.count(break_char) >= original_breaks:
+        return corrected_text
+
+    parts = original_text.split(break_char)
+    if len(parts) <= 1:
+        return corrected_text
+
+    total_original_len = sum(len(p) for p in parts)
+    if total_original_len <= 0:
+        return corrected_text
+
+    corrected_len = len(corrected_text)
+    # Allocate corrected text across original line proportions, then join with soft breaks.
+    target_lengths = [round((len(p) / total_original_len) * corrected_len) for p in parts]
+    diff = corrected_len - sum(target_lengths)
+    if target_lengths:
+        target_lengths[-1] += diff
+
+    chunks = []
+    cursor = 0
+    for i, target in enumerate(target_lengths):
+        remaining = corrected_len - cursor
+        if i == len(target_lengths) - 1:
+            chunk_len = remaining
+        else:
+            chunk_len = max(0, min(int(target), remaining))
+        chunks.append(corrected_text[cursor:cursor + chunk_len])
+        cursor += chunk_len
+
+    return break_char.join(chunks)
 
 def _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config):
     """
@@ -104,7 +142,7 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
         if block_content[last_end:start]:
             _add_run_elem(block_content[last_end:start])
 
-        corrected_text = corr.get('corrected', orig)
+        corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
         matcher = difflib.SequenceMatcher(None, orig, corrected_text)
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag == 'equal':
@@ -176,7 +214,7 @@ def apply_corrections_to_batch(batch_items, config, client, stats):
             end = start + len(orig)
             para.add_run(block_content[last_end:start])
             
-            corrected_text = corr.get('corrected', orig)
+            corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
             matcher = difflib.SequenceMatcher(None, orig, corrected_text)
             for tag, i1, i2, j1, j2 in matcher.get_opcodes():
                 if tag == 'equal':
