@@ -78,8 +78,8 @@ Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: default
-LLM Provider: ollama
-LLM Model: gpt-oss:120b-cloud
+LLM Provider: github
+LLM Model: gpt-4o-mini
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
 

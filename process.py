@@ -14,43 +14,11 @@ try:
 except (ImportError, ModuleNotFoundError):
     mhtml_to_docx = None
 
-GITHUB_PROVIDER = "github"
 OLLAMA_PROVIDER = "ollama"
-GITHUB_MODEL = "gpt-5-mini"
-GITHUB_BASE_URL = "https://models.inference.ai.azure.com/v1"
-
-
-def get_github_token():
-    """Gets GitHub token from process env, then Windows user env registry as fallback."""
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-    if token:
-        return token
-
-    if os.name == "nt":
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as env_key:
-                for token_key in ("GITHUB_TOKEN", "GH_TOKEN"):
-                    try:
-                        value, _ = winreg.QueryValueEx(env_key, token_key)
-                        if value:
-                            return value
-                    except FileNotFoundError:
-                        continue
-        except Exception:
-            pass
-
-    return None
 
 
 def create_client(provider):
-    """Creates an OpenAI-compatible client for the selected provider."""
-    if provider == GITHUB_PROVIDER:
-        github_token = get_github_token()
-        if not github_token:
-            raise RuntimeError("Missing GITHUB_TOKEN (or GH_TOKEN) for GitHub Models.")
-        return OpenAI(base_url=GITHUB_BASE_URL, api_key=github_token)
-
+    """Creates an OpenAI-compatible client for Ollama."""
     return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
 
@@ -66,20 +34,19 @@ def fetch_ollama_models():
 
 
 def select_model(default_model, default_provider):
-    """Lists available models and lets the user select a provider/model pair."""
+    """Lists available models and lets the user select from Ollama."""
     models = fetch_ollama_models()
     options = [(OLLAMA_PROVIDER, model_name) for model_name in models]
-    options.append((GITHUB_PROVIDER, GITHUB_MODEL))
 
     if not models:
-        print("No models found in Ollama. You can still use GitHub GPT-5 mini.")
+        print("No models found in Ollama. Please ensure Ollama is running and a model is available.")
 
     try:
         print("\n--- 1. Model Selection ---")
         print("Available models:")
         default_index = -1
         for i, (provider, model_name) in enumerate(options):
-            label = f"{model_name} (GitHub)" if provider == GITHUB_PROVIDER else model_name
+            label = model_name
             if model_name == default_model and provider == default_provider:
                 print(f"  {i+1}: {label} (default)")
                 default_index = i
@@ -87,8 +54,6 @@ def select_model(default_model, default_provider):
                 print(f"  {i+1}: {label}")
 
         default_label = default_model
-        if default_provider == GITHUB_PROVIDER:
-            default_label = f"{default_model} (GitHub)"
 
         prompt = f"Select a model number to use (press Enter for default: {default_label}): "
         selection = input(prompt)
@@ -208,10 +173,7 @@ def run_interactive_wizard():
         print(f"Using model: {config['llm_model']}")
     except Exception as e:
         print(f"\nError: Could not initialize {selected_provider} client: {e}")
-        if selected_provider == OLLAMA_PROVIDER:
-            print("Please ensure Ollama is running.")
-        else:
-            print("Please set GITHUB_TOKEN (or GH_TOKEN) for GitHub Models.")
+        print("Please ensure Ollama is running and a model is available.")
         return
 
     # 2. Select source files
@@ -267,10 +229,7 @@ def main():
     except Exception as e:
         provider = config.get('llm_provider', OLLAMA_PROVIDER)
         print(f"Error: Could not initialize {provider} client: {e}")
-        if provider == OLLAMA_PROVIDER:
-            print("Please ensure Ollama is running and the model is available.")
-        else:
-            print("Please set GITHUB_TOKEN (or GH_TOKEN) for GitHub Models.")
+        print("Please ensure Ollama is running and the model is available.")
         return
 
     files_to_process = []
