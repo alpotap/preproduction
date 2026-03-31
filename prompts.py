@@ -12,18 +12,27 @@ Return [] if no errors."""
 
 PROMPTS = {
     "default": f"""
-Copy edit this {{language}} text segment (which may contain multiple paragraphs) using Microsoft Style Guide principles.
+You are a professional copy editor. Your task is to thoroughly review every sentence of the following {{language}} text and apply corrections based on Microsoft Style Guide principles.
 
-Tasks:
-• Minimal corrections: spelling, grammar, punctuation, active voice.
+Review each sentence for ALL of the following — do not skip any category:
+• Spelling errors (including typos, wrong word forms)
+• Grammar errors (subject-verb agreement, tense consistency, missing or extra words)
+• Punctuation errors (missing commas, incorrect apostrophes, double spaces)
+• Active voice where passive voice weakens clarity
+• Awkward phrasing that can be made clearer without changing meaning
 {CONSTRAINTS}
 {JSON_OUTPUT_INSTRUCTIONS}
 
 Text: {{text}}
 """,
     "grammar_only": f"""
-Check this {{language}} text for objective spelling, grammar, and punctuation errors only.
-Do not offer stylistic improvements or voice changes.
+You are a professional copy editor. Carefully check every sentence of the following {{language}} text for spelling, grammar, and punctuation errors.
+
+Review each sentence for ALL of the following — do not skip any category:
+• Spelling errors (including typos and wrong word forms)
+• Grammar errors (subject-verb agreement, tense, missing or extra words)
+• Punctuation errors (missing commas, incorrect apostrophes, double spaces)
+Do not suggest stylistic changes or voice changes.
 {CONSTRAINTS}
 {JSON_OUTPUT_INSTRUCTIONS}
 

@@ -4,7 +4,7 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 
 from utils import load_config, save_config, log_performance_stats
 from document_processor import process_docx
@@ -15,17 +15,86 @@ except (ImportError, ModuleNotFoundError):
     mhtml_to_docx = None
 
 OLLAMA_PROVIDER = "ollama"
+AZURE_PROVIDER = "azure_openai"
+AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
 
 
-def create_client(provider):
-    """Creates an OpenAI-compatible client for Ollama."""
+def normalize_provider(provider):
+    """Normalizes persisted provider values to supported provider keys."""
+    provider = (provider or "").strip().lower()
+    if provider in {"azure", "azure_openai", "github"}:
+        return AZURE_PROVIDER
+    if provider in {"azure_ai_foundry", "foundry"}:
+        return AZURE_AI_FOUNDRY_PROVIDER
+    return OLLAMA_PROVIDER
+
+
+def get_azure_settings(config):
+    """Loads Azure OpenAI settings from env/config."""
+    return {
+        "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
+        "api_version": os.getenv("AZURE_OPENAI_API_VERSION") or config.get("azure_api_version", "2024-10-21"),
+        "deployment_name": config.get("azure_deployment_name", "").strip(),
+    }
+
+
+def get_azure_ai_foundry_settings(config):
+    """Loads Azure AI Foundry settings from env/config."""
+    return {
+        "api_key": os.getenv("AZURE_AI_FOUNDRY_API_KEY"),
+        "endpoint": os.getenv("AZURE_AI_FOUNDRY_ENDPOINT"),
+        "model_name": config.get("azure_ai_foundry_model_name", "").strip(),
+    }
+
+
+def validate_provider_config(provider, config):
+    """Validates provider-specific configuration before processing."""
+    normalized_provider = normalize_provider(provider)
+    if normalized_provider == AZURE_PROVIDER:
+        azure_settings = get_azure_settings(config)
+        if not azure_settings["deployment_name"]:
+            raise RuntimeError("Missing Azure Deployment Name in configuration.")
+    elif normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        foundry_settings = get_azure_ai_foundry_settings(config)
+        if not foundry_settings["model_name"]:
+            raise RuntimeError("Missing Azure AI Foundry Model Name in configuration.")
+
+
+def create_client(provider, config):
+    """Creates an LLM client for the selected provider."""
+    normalized_provider = normalize_provider(provider)
+    if normalized_provider == AZURE_PROVIDER:
+        azure_settings = get_azure_settings(config)
+        if not azure_settings["api_key"]:
+            raise RuntimeError("Missing AZURE_OPENAI_API_KEY environment variable.")
+        if not azure_settings["endpoint"]:
+            raise RuntimeError("Missing AZURE_OPENAI_ENDPOINT environment variable.")
+
+        return AzureOpenAI(
+            api_key=azure_settings["api_key"],
+            azure_endpoint=azure_settings["endpoint"],
+            api_version=azure_settings["api_version"],
+        )
+    elif normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        foundry_settings = get_azure_ai_foundry_settings(config)
+        if not foundry_settings["api_key"]:
+            raise RuntimeError("Missing AZURE_AI_FOUNDRY_API_KEY environment variable.")
+        if not foundry_settings["endpoint"]:
+            raise RuntimeError("Missing AZURE_AI_FOUNDRY_ENDPOINT environment variable.")
+
+        return OpenAI(
+            api_key=foundry_settings["api_key"],
+            base_url=foundry_settings["endpoint"].rstrip("/"),
+        )
+
     return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
 
 def fetch_ollama_models():
     """Fetches available model IDs from Ollama, returning an empty list on failure."""
     try:
-        client = create_client(OLLAMA_PROVIDER)
+        client = create_client(OLLAMA_PROVIDER, {})
         models_response = client.models.list()
         return [m.id for m in models_response.data] if models_response.data else []
     except Exception as e:
@@ -33,33 +102,59 @@ def fetch_ollama_models():
         return []
 
 
-def select_model(default_model, default_provider):
-    """Lists available models and lets the user select from Ollama."""
+def select_model(default_model, default_provider, config):
+    """Lists available models and lets the user select provider/model."""
     models = fetch_ollama_models()
     options = [(OLLAMA_PROVIDER, model_name) for model_name in models]
-
-    if not models:
-        print("No models found in Ollama. Please ensure Ollama is running and a model is available.")
+    
+    azure_settings = get_azure_settings(config)
+    if azure_settings["deployment_name"]:
+        options.append((AZURE_PROVIDER, azure_settings["deployment_name"]))
+    
+    foundry_settings = get_azure_ai_foundry_settings(config)
+    if foundry_settings["model_name"]:
+        options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_settings["model_name"]))
+    
+    if not models and not azure_settings["deployment_name"] and not foundry_settings["model_name"]:
+        print("No models found. Ensure Ollama is running and/or configure Azure provider.")
+    elif not models:
+        print("No models found in Ollama. Azure providers are available if configured.")
 
     try:
         print("\n--- 1. Model Selection ---")
         print("Available models:")
         default_index = -1
+        normalized_default_provider = normalize_provider(default_provider)
         for i, (provider, model_name) in enumerate(options):
-            label = model_name
-            if model_name == default_model and provider == default_provider:
+            if provider == AZURE_PROVIDER:
+                provider_label = "Azure OpenAI"
+            elif provider == AZURE_AI_FOUNDRY_PROVIDER:
+                provider_label = "Azure AI Foundry"
+            else:
+                provider_label = "Ollama"
+            label = f"{model_name} ({provider_label})"
+            if model_name == default_model and provider == normalized_default_provider:
                 print(f"  {i+1}: {label} (default)")
                 default_index = i
             else:
                 print(f"  {i+1}: {label}")
 
         default_label = default_model
+        if normalized_default_provider == AZURE_PROVIDER:
+            default_label = f"{default_model} (Azure OpenAI)"
+        elif normalized_default_provider == AZURE_AI_FOUNDRY_PROVIDER:
+            default_label = f"{default_model} (Azure AI Foundry)"
+        elif default_model:
+            default_label = f"{default_model} (Ollama)"
 
         prompt = f"Select a model number to use (press Enter for default: {default_label}): "
         selection = input(prompt)
 
         if not selection.strip() and default_index != -1:
             return options[default_index]
+        if not selection.strip() and options:
+            print("Default model was not available. Using first listed option.")
+            return options[0]
 
         try:
             index = int(selection) - 1
@@ -67,13 +162,13 @@ def select_model(default_model, default_provider):
                 return options[index]
             else:
                 print("Invalid number. Using default.")
-                return default_provider, default_model
+                return normalized_default_provider, default_model
         except (ValueError, IndexError):
             if selection.strip():
                 print("Invalid input. Using default.")
-            return default_provider, default_model
+            return normalized_default_provider, default_model
     except Exception:
-        return default_provider, default_model
+        return normalize_provider(default_provider), default_model
 
 def select_source_files(workspace_dir):
     """Scans for all processable files and lets the user select them."""
@@ -126,7 +221,6 @@ def prompt_and_download_urls(workspace_dir):
     print(f"Found '{urls_file.relative_to(workspace_dir).as_posix()}'.")
     
     while True:
-        import re
         choice = input("Do you want to download new web pages from this file? (y/n, default: n): ").lower().strip()
         if choice in ['y', 'yes']:
             should_download = True
@@ -155,25 +249,47 @@ def run_interactive_wizard():
     print("--- Starting Interactive Spell-Check Wizard ---")
     
     config = load_config()
+    config['llm_provider'] = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
+    if config['llm_provider'] == AZURE_PROVIDER:
+        azure_settings = get_azure_settings(config)
+        if azure_settings['deployment_name']:
+            config['llm_model'] = azure_settings['deployment_name']
+    elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
+        foundry_settings = get_azure_ai_foundry_settings(config)
+        if foundry_settings['model_name']:
+            config['llm_model'] = foundry_settings['model_name']
+
     workspace_dir = Path(__file__).parent
 
     # 0. (New) Prompt to download URLs
     prompt_and_download_urls(workspace_dir)
 
     # 1. Select model and connect to provider
-    selected_provider = config.get('llm_provider', OLLAMA_PROVIDER)
+    selected_provider = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
     try:
         selected_provider, selected_model = select_model(
             config['llm_model'],
-            config.get('llm_provider', OLLAMA_PROVIDER)
+            config.get('llm_provider', OLLAMA_PROVIDER),
+            config,
         )
-        config['llm_provider'] = selected_provider
+        config['llm_provider'] = normalize_provider(selected_provider)
         config['llm_model'] = selected_model
-        client = create_client(selected_provider)
+        if config['llm_provider'] == AZURE_PROVIDER:
+            config['llm_model'] = get_azure_settings(config)['deployment_name'] or selected_model
+        elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
+            config['llm_model'] = get_azure_ai_foundry_settings(config)['model_name'] or selected_model
+
+        validate_provider_config(config['llm_provider'], config)
+        client = create_client(config['llm_provider'], config)
         print(f"Using model: {config['llm_model']}")
     except Exception as e:
         print(f"\nError: Could not initialize {selected_provider} client: {e}")
-        print("Please ensure Ollama is running and a model is available.")
+        if selected_provider == AZURE_PROVIDER:
+            print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
+        elif selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
+            print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+        else:
+            print("Please ensure Ollama is running and a model is available.")
         return
 
     # 2. Select source files
@@ -219,17 +335,33 @@ def main():
     args = parser.parse_args()
 
     config = load_config()
+    config['llm_provider'] = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
+    if config['llm_provider'] == AZURE_PROVIDER:
+        azure_settings = get_azure_settings(config)
+        if azure_settings['deployment_name']:
+            config['llm_model'] = azure_settings['deployment_name']
+    elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
+        foundry_settings = get_azure_ai_foundry_settings(config)
+        if foundry_settings['model_name']:
+            config['llm_model'] = foundry_settings['model_name']
+
     workspace_dir = Path(__file__).parent
 
     try:
         provider = config.get('llm_provider', OLLAMA_PROVIDER)
-        client = create_client(provider)
+        validate_provider_config(provider, config)
+        client = create_client(provider, config)
         if provider == OLLAMA_PROVIDER:
             client.models.list()
     except Exception as e:
         provider = config.get('llm_provider', OLLAMA_PROVIDER)
         print(f"Error: Could not initialize {provider} client: {e}")
-        print("Please ensure Ollama is running and the model is available.")
+        if provider == AZURE_PROVIDER:
+            print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
+        elif provider == AZURE_AI_FOUNDRY_PROVIDER:
+            print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+        else:
+            print("Please ensure Ollama is running and the model is available.")
         return
 
     files_to_process = []

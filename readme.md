@@ -78,15 +78,83 @@ Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: default
-LLM Provider: github
-LLM Model: gpt-4o-mini
+LLM Provider: azure_ai_foundry
+LLM Model: gpt-oss-120b
+Azure API Version: 2025-03-01-preview
+Azure Deployment Name: GPT 40 mini (low quality but very fast)
+Azure AI Foundry Model Name: gpt-oss-120b
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
 
 ## Model providers
 
 - `ollama`: local model endpoint (`http://localhost:11434/v1`)
-- `github`: GitHub Models endpoint (requires `GITHUB_TOKEN` or `GH_TOKEN`)
+- `azure_openai`: Azure OpenAI endpoint (requires Azure environment variables)
+- `azure_ai_foundry`: Azure AI Foundry endpoint (requires Azure AI Foundry environment variables, no API version required)
+
+## Environment Variables by Provider
+
+### Ollama
+No environment variables needed. Ollama uses local endpoint `http://localhost:11434/v1`.
+
+### Azure OpenAI
+
+**Required environment variables:**
+
+- `AZURE_OPENAI_API_KEY` — Your Azure OpenAI API key (Key 1 or Key 2 from Azure Portal)
+- `AZURE_OPENAI_ENDPOINT` — Your Azure OpenAI endpoint (e.g., `https://your-resource-name.openai.azure.com/`)
+
+**Optional environment variable:**
+
+- `AZURE_OPENAI_API_VERSION` — Overrides `Azure API Version` in configuration (default: `2024-10-21`)
+
+**Setup example (PowerShell):**
+```powershell
+$env:AZURE_OPENAI_API_KEY="your-api-key-here"
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource-name.openai.azure.com/"
+```
+
+**Permanent setup (PowerShell):**
+```powershell
+setx AZURE_OPENAI_API_KEY "your-api-key-here"
+setx AZURE_OPENAI_ENDPOINT "https://your-resource-name.openai.azure.com/"
+```
+
+### Azure AI Foundry
+
+**Required environment variables:**
+
+- `AZURE_AI_FOUNDRY_API_KEY` — Your Azure AI Foundry API key
+- `AZURE_AI_FOUNDRY_ENDPOINT` — Your Azure AI Foundry endpoint including `/openai/v1` path (e.g., `https://your-resource.services.ai.azure.com/openai/v1/`)
+
+**Setup example (PowerShell):**
+```powershell
+$env:AZURE_AI_FOUNDRY_API_KEY="your-foundry-key-here"
+$env:AZURE_AI_FOUNDRY_ENDPOINT="https://your-resource.services.ai.azure.com/openai/v1/"
+```
+
+**Permanent setup (PowerShell):**
+```powershell
+setx AZURE_AI_FOUNDRY_API_KEY "your-foundry-key-here"
+setx AZURE_AI_FOUNDRY_ENDPOINT "https://your-resource.services.ai.azure.com/openai/v1/"
+```
+
+## Verifying Environment Variables
+
+To verify your environment variables are set correctly:
+
+```powershell
+# Check if set
+echo $env:AZURE_OPENAI_API_KEY
+echo $env:AZURE_OPENAI_ENDPOINT
+echo $env:AZURE_AI_FOUNDRY_API_KEY
+echo $env:AZURE_AI_FOUNDRY_ENDPOINT
+
+# Check just the first character (for security)
+echo $env:AZURE_OPENAI_API_KEY[0]
+```
+
+If variables don't appear, restart PowerShell after using `setx`.
 
 If provider initialization fails, the tool prints a recovery hint in terminal output.
 
@@ -102,8 +170,12 @@ If provider initialization fails, the tool prints a recovery hint in terminal ou
     - Start Ollama and ensure a model is installed.
 - `.mhtml` conversion fails:
     - Ensure Word is installed and `pywin32` is available.
-- GitHub model fails:
-    - Set `GITHUB_TOKEN` or `GH_TOKEN` in your environment.
+- Azure OpenAI initialization fails:
+    - Set `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT`.
+    - Ensure `Azure Deployment Name` matches your deployed model name in Azure OpenAI.
+- Azure AI Foundry initialization fails:
+    - Set `AZURE_AI_FOUNDRY_API_KEY` and `AZURE_AI_FOUNDRY_ENDPOINT`.
+    - Ensure `Azure AI Foundry Model Name` matches your deployed model name in Azure AI Foundry.
 
 ## Prompt behavior
 

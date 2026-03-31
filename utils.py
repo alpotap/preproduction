@@ -14,6 +14,9 @@ def load_config():
         'active_prompt': 'default',
         'llm_provider': 'ollama',
         'llm_model': 'local-model',
+        'azure_api_version': '2024-10-21',
+        'azure_deployment_name': '',
+        'azure_ai_foundry_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
         'default_output_format': 'md'
