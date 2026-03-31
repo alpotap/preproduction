@@ -89,6 +89,14 @@ def _preserve_soft_breaks(original_text, corrected_text):
 
     return break_char.join(chunks)
 
+
+def _build_deletion_marker(deleted_text):
+    """Builds a visible marker for deleted text so removals are obvious in output."""
+    if not deleted_text:
+        return ""
+    visible = deleted_text.replace("\n", r"\n")
+    return f"[-{visible}-]"
+
 def _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config):
     """
     Rewrites the text of a paragraph that contains both text and image runs.
@@ -112,13 +120,13 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
         p.remove(r_elem)
 
     # --- Build new text runs (same logic as the normal path) ---
-    def _add_run_elem(text, bold=False, color=None, italic=False):
+    def _add_run_elem(text, bold=False, color=None, italic=False, strike=False):
         r = etree.SubElement(p, qn('w:r'))
         t = etree.SubElement(r, qn('w:t'))
         t.text = text
         if text.startswith(' ') or text.endswith(' '):
             t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
-        if bold or color or italic:
+        if bold or color or italic or strike:
             rpr = etree.Element(qn('w:rPr'))
             r.insert(0, rpr)
             if bold:
@@ -128,6 +136,8 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
                 clr.set(qn('w:val'), color)
             if italic:
                 etree.SubElement(rpr, qn('w:i'))
+            if strike:
+                etree.SubElement(rpr, qn('w:strike'))
         return r
 
     block_corrections.sort(key=lambda x: block_content.find(x['original']))
@@ -152,6 +162,10 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
                     _add_run_elem(corrected_text[j1:j2], bold=True, color='FF0000')
                 else:
                     _add_run_elem(corrected_text[j1:j2])
+            elif tag == 'delete':
+                deleted_marker = _build_deletion_marker(orig[i1:i2])
+                if deleted_marker:
+                    _add_run_elem(deleted_marker, color='FF0000', strike=True)
 
         if config.get('add_comments', True):
             explanation = corr.get('explanation', '').strip()
@@ -224,6 +238,12 @@ def apply_corrections_to_batch(batch_items, config, client, stats):
                     if config.get('highlight_corrections', True):
                         run.bold = True
                         run.font.color.rgb = RGBColor(255, 0, 0)
+                elif tag == 'delete':
+                    deleted_marker = _build_deletion_marker(orig[i1:i2])
+                    if deleted_marker:
+                        deleted_run = para.add_run(deleted_marker)
+                        deleted_run.font.strike = True
+                        deleted_run.font.color.rgb = RGBColor(255, 0, 0)
 
             if config.get('add_comments', True):
                 explanation = corr.get('explanation', '').strip()

@@ -19,19 +19,46 @@ AZURE_PROVIDER = "azure_openai"
 AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
 
 
-def prompt_course_number():
-    """Prompts for a course identifier used for input/output folder scoping."""
-    print("\n--- 2. Course Number ---")
-    print("Enter a course number (example: 3-6357).")
+def prompt_course_folder(workspace_dir):
+    """Prompts for a course folder under input/, selecting existing or creating a new one."""
+    input_root = workspace_dir / 'input'
+    input_root.mkdir(exist_ok=True)
+
+    folders = sorted([d.name for d in input_root.iterdir() if d.is_dir()])
+
+    print("\n--- 2. Course Folder ---")
+    if folders:
+        print("Existing input folders:")
+        for i, folder_name in enumerate(folders, start=1):
+            print(f"  {i}: {folder_name}")
+    print("Enter a folder name/number (example: 1001).")
+
     while True:
-        value = input("Course number: ").strip()
+        value = input("Course folder: ").strip()
         if not value:
-            print("Course number is required.")
+            print("Course folder is required.")
             continue
+
+        if value.isdigit():
+            idx = int(value) - 1
+            if 0 <= idx < len(folders):
+                chosen = folders[idx]
+                selected_dir = input_root / chosen
+                print(f"Using existing folder: {chosen}")
+                return chosen, selected_dir
+
         if any(ch in value for ch in ('/', '\\\\')):
-            print("Invalid course number. Do not use path separators.")
+            print("Invalid folder name. Do not use path separators.")
             continue
-        return value
+
+        chosen = value
+        selected_dir = input_root / chosen
+        if selected_dir.exists():
+            print(f"Using existing folder: {chosen}")
+        else:
+            selected_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Created folder: {chosen}")
+        return chosen, selected_dir
 
 
 def list_processable_files(source_dir):
@@ -42,37 +69,15 @@ def list_processable_files(source_dir):
     )
 
 
-def select_course_folder(workspace_dir, default_course):
-    """Lets the user choose which course folder under input/ to process."""
-    input_root = workspace_dir / 'input'
-    input_root.mkdir(exist_ok=True)
+def show_existing_files_for_course(workspace_dir, source_dir):
+    """Displays files already present in the selected input course folder."""
+    existing_files = sorted([p for p in source_dir.iterdir() if p.is_file()])
+    if not existing_files:
+        return
 
-    folders = sorted([d.name for d in input_root.iterdir() if d.is_dir()])
-    if default_course not in folders:
-        folders.insert(0, default_course)
-
-    print("\n--- 3. Course Folder Selection ---")
-    for i, folder_name in enumerate(folders):
-        suffix = " (new)" if folder_name == default_course and not (input_root / folder_name).exists() else ""
-        print(f"  {i+1}: input/{folder_name}{suffix}")
-
-    prompt = f"Select a folder number to use (press Enter for input/{default_course}): "
-    selection = input(prompt).strip()
-
-    chosen = default_course
-    if selection:
-        try:
-            idx = int(selection) - 1
-            if 0 <= idx < len(folders):
-                chosen = folders[idx]
-            else:
-                print("Invalid number. Using default course folder.")
-        except ValueError:
-            print("Invalid input. Using default course folder.")
-
-    selected_dir = input_root / chosen
-    selected_dir.mkdir(exist_ok=True)
-    return chosen, selected_dir
+    print("\nFiles already in selected input folder:")
+    for i, file_path in enumerate(existing_files, start=1):
+        print(f"  {i}: {file_path.relative_to(workspace_dir).as_posix()}")
 
 
 def normalize_provider(provider):
@@ -226,6 +231,31 @@ def select_model(default_model, default_provider, config):
     except Exception:
         return normalize_provider(default_provider), default_model
 
+
+def format_model_label(model_name, provider):
+    """Returns a user-friendly model label including provider."""
+    normalized_provider = normalize_provider(provider)
+    if normalized_provider == AZURE_PROVIDER:
+        provider_label = "Azure OpenAI"
+    elif normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        provider_label = "Azure AI Foundry"
+    else:
+        provider_label = "Ollama"
+    return f"{model_name} ({provider_label})"
+
+
+def prompt_change_model(current_model, current_provider):
+    """Asks whether to keep the last used model or choose another one."""
+    print("\n--- 1. AI Model ---")
+    print(f"Last used model: {format_model_label(current_model, current_provider)}")
+    while True:
+        choice = input("Change model for this run? (y/n, default: n): ").lower().strip()
+        if choice in ['y', 'yes']:
+            return True
+        if choice in ['n', 'no', '']:
+            return False
+        print("Invalid input. Please enter 'y' or 'n'.")
+
 def select_source_files(workspace_dir, source_dir):
     """Scans for processable files in source_dir and lets the user select them."""
     all_files = list_processable_files(source_dir)
@@ -333,27 +363,32 @@ def run_interactive_wizard():
 
     workspace_dir = Path(__file__).parent
 
-    # 1. Ask course number first
-    course_number = prompt_course_number()
+    # 1. Choose/create course folder first
+    selected_course, source_dir = prompt_course_folder(workspace_dir)
+    show_existing_files_for_course(workspace_dir, source_dir)
 
-    # 2. Select model and connect to provider
+    # 2. Optionally change model, otherwise keep last used model
     selected_provider = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
+    should_change_model = prompt_change_model(config['llm_model'], selected_provider)
     try:
-        selected_provider, selected_model = select_model(
-            config['llm_model'],
-            config.get('llm_provider', OLLAMA_PROVIDER),
-            config,
-        )
-        config['llm_provider'] = normalize_provider(selected_provider)
-        config['llm_model'] = selected_model
-        if config['llm_provider'] == AZURE_PROVIDER:
-            config['llm_model'] = get_azure_settings(config)['deployment_name'] or selected_model
-        elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
-            config['llm_model'] = get_azure_ai_foundry_settings(config)['model_name'] or selected_model
+        if should_change_model:
+            selected_provider, selected_model = select_model(
+                config['llm_model'],
+                config.get('llm_provider', OLLAMA_PROVIDER),
+                config,
+            )
+            config['llm_provider'] = normalize_provider(selected_provider)
+            config['llm_model'] = selected_model
+            if config['llm_provider'] == AZURE_PROVIDER:
+                config['llm_model'] = get_azure_settings(config)['deployment_name'] or selected_model
+            elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
+                config['llm_model'] = get_azure_ai_foundry_settings(config)['model_name'] or selected_model
+        else:
+            config['llm_provider'] = selected_provider
 
         validate_provider_config(config['llm_provider'], config)
         client = create_client(config['llm_provider'], config)
-        print(f"Using model: {config['llm_model']}")
+        print(f"Using model: {format_model_label(config['llm_model'], config['llm_provider'])}")
     except Exception as e:
         print(f"\nError: Could not initialize {selected_provider} client: {e}")
         if selected_provider == AZURE_PROVIDER:
@@ -369,16 +404,6 @@ def run_interactive_wizard():
     should_download = prompt_should_download(urls_file)
     process_strategy = prompt_process_strategy(should_download)
 
-    if should_download:
-        # New content is created in a course-specific folder, so no folder selection is needed.
-        selected_course = course_number
-        source_dir = workspace_dir / 'input' / selected_course
-        source_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        # If no download is performed, let the user choose which existing course folder to process.
-        default_course = course_number
-        selected_course, source_dir = select_course_folder(workspace_dir, default_course)
-
     output_dir = workspace_dir / config['output_dir'] / selected_course
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -393,7 +418,7 @@ def run_interactive_wizard():
     if process_strategy == 'choose_later':
         files_to_process = select_source_files(workspace_dir, source_dir)
     elif should_download:
-        files_to_process = [f for f in downloaded_files if f.suffix.lower() in {'.mhtml', '.docx'}]
+        files_to_process = list_processable_files(source_dir)
         if not files_to_process:
             print("\nNo files were downloaded to process.")
     else:

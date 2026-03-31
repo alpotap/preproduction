@@ -78,8 +78,8 @@ Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: default
-LLM Provider: ollama
-LLM Model: gpt-oss:120b-cloud
+LLM Provider: azure_ai_foundry
+LLM Model: gpt-oss-120b
 Azure API Version: 2025-03-01-preview
 Azure Deployment Name: GPT 40 mini (low quality but very fast)
 Azure AI Foundry Model Name: gpt-oss-120b
