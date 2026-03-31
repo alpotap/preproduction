@@ -251,10 +251,24 @@ def process_docx(input_path, output_path, config, client):
     }
     print("Processing document paragraphs...")
 
+    # Collect all paragraphs from document body and tables
+    all_paragraphs = []
+    
+    # Add paragraphs from document body
+    for para in doc.paragraphs:
+        all_paragraphs.append(para)
+    
+    # Add paragraphs from table cells
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    all_paragraphs.append(para)
+
     current_batch = []
     current_word_count = 0
     
-    for para in doc.paragraphs:
+    for para in all_paragraphs:
         text = para.text.strip()
         if not text:
             continue

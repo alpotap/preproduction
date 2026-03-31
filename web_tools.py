@@ -1,3 +1,4 @@
+import os
 import re
 import time
 import email
@@ -16,18 +17,41 @@ def download_url_as_mhtml(url, output_dir):
         print("Selenium not installed. Cannot download URLs.")
         return None
 
+    headless = os.getenv("EDGE_HEADLESS", "true").strip().lower() not in {"false", "0", "no"}
+    try:
+        wait_seconds = int(os.getenv("EDGE_WAIT_SECONDS", "25"))
+    except ValueError:
+        wait_seconds = 25
+
+    driver = None
     try:
         print(f"Downloading {url}...")
         options = webdriver.EdgeOptions()
+        if headless:
+            options.add_argument("--headless=new")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         service = Service()
         driver = webdriver.Edge(service=service, options=options)
         driver.get(url)
-        time.sleep(25) # Wait for dynamic content
+        time.sleep(wait_seconds)  # Wait for dynamic content
+
+        # Remove UI drawer/navigation before snapshot so it does not enter downstream processing.
+        drawer_removed = driver.execute_script("""
+            const nodes = document.querySelectorAll('div.MuiDrawer-root');
+            const count = nodes.length;
+            nodes.forEach(n => n.remove());
+            return count;
+        """)
+        if drawer_removed:
+            print(f"Removed {drawer_removed} 'MuiDrawer-root' section(s) before snapshot.")
+
+        # Let layout settle after DOM edits before capturing MHTML.
+        time.sleep(1)
 
         mhtml_data = driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})['data']
-        driver.quit()
 
         filename = None
         try:
@@ -89,3 +113,9 @@ def download_url_as_mhtml(url, output_dir):
     except Exception as e:
         print(f"Error downloading URL {url}: {e}")
         return None
+    finally:
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass

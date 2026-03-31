@@ -19,6 +19,62 @@ AZURE_PROVIDER = "azure_openai"
 AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
 
 
+def prompt_course_number():
+    """Prompts for a course identifier used for input/output folder scoping."""
+    print("\n--- 2. Course Number ---")
+    print("Enter a course number (example: 3-6357).")
+    while True:
+        value = input("Course number: ").strip()
+        if not value:
+            print("Course number is required.")
+            continue
+        if any(ch in value for ch in ('/', '\\\\')):
+            print("Invalid course number. Do not use path separators.")
+            continue
+        return value
+
+
+def list_processable_files(source_dir):
+    """Returns sorted processable files from a source folder."""
+    return sorted(
+        [f for f in source_dir.glob("*.docx") if "_corrected" not in f.name]
+        + [f for f in source_dir.glob("*.mhtml") if "_corrected" not in f.name]
+    )
+
+
+def select_course_folder(workspace_dir, default_course):
+    """Lets the user choose which course folder under input/ to process."""
+    input_root = workspace_dir / 'input'
+    input_root.mkdir(exist_ok=True)
+
+    folders = sorted([d.name for d in input_root.iterdir() if d.is_dir()])
+    if default_course not in folders:
+        folders.insert(0, default_course)
+
+    print("\n--- 3. Course Folder Selection ---")
+    for i, folder_name in enumerate(folders):
+        suffix = " (new)" if folder_name == default_course and not (input_root / folder_name).exists() else ""
+        print(f"  {i+1}: input/{folder_name}{suffix}")
+
+    prompt = f"Select a folder number to use (press Enter for input/{default_course}): "
+    selection = input(prompt).strip()
+
+    chosen = default_course
+    if selection:
+        try:
+            idx = int(selection) - 1
+            if 0 <= idx < len(folders):
+                chosen = folders[idx]
+            else:
+                print("Invalid number. Using default course folder.")
+        except ValueError:
+            print("Invalid input. Using default course folder.")
+
+    selected_dir = input_root / chosen
+    selected_dir.mkdir(exist_ok=True)
+    return chosen, selected_dir
+
+
 def normalize_provider(provider):
     """Normalizes persisted provider values to supported provider keys."""
     provider = (provider or "").strip().lower()
@@ -170,22 +226,17 @@ def select_model(default_model, default_provider, config):
     except Exception:
         return normalize_provider(default_provider), default_model
 
-def select_source_files(workspace_dir):
-    """Scans for all processable files and lets the user select them."""
-    input_dir = workspace_dir / 'input'
-    input_dir.mkdir(exist_ok=True)
-
-    all_files = sorted(list(input_dir.glob("*.docx")) + list(input_dir.glob("*.mhtml")))
+def select_source_files(workspace_dir, source_dir):
+    """Scans for processable files in source_dir and lets the user select them."""
+    all_files = list_processable_files(source_dir)
 
     if not all_files:
-        print("\nNo processable files (.docx, .mhtml) found in 'input/'.")
+        print(f"\nNo processable files (.docx, .mhtml) found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
         return []
 
     print("\n--- 3. Source Document Selection ---")
-    print("Found the following processable files:")
+    print(f"Found the following processable files in '{source_dir.relative_to(workspace_dir).as_posix()}':")
     for i, f in enumerate(all_files):
-        if "_corrected" in f.name: continue
-        # Show relative path for clarity
         print(f"  {i+1}: {f.relative_to(workspace_dir).as_posix()}")
 
     print("\nEnter the numbers of the files to process (e.g., '1 3 4'), or 'all'. Press Enter to cancel.")
@@ -211,38 +262,59 @@ def select_source_files(workspace_dir):
         
     return selected_files
 
-def prompt_and_download_urls(workspace_dir):
-    """Checks for urls.txt and prompts the user to download them as MHTML."""
-    urls_file = workspace_dir / 'input' / 'urls.txt'
+def prompt_should_download(urls_file):
+    """Asks whether urls.txt should be downloaded in this run."""
     if not urls_file.exists():
-        return # No urls.txt, so nothing to do.
+        return False
 
-    print("\n--- Pre-Step: Download Web Pages ---")
-    print(f"Found '{urls_file.relative_to(workspace_dir).as_posix()}'.")
-    
+    print("\n--- 4. Download Web Pages ---")
+    print(f"Found '{urls_file.as_posix()}'.")
     while True:
-        choice = input("Do you want to download new web pages from this file? (y/n, default: n): ").lower().strip()
+        choice = input("Download web pages from this file? (y/n, default: n): ").lower().strip()
         if choice in ['y', 'yes']:
-            should_download = True
-            break
-        elif choice in ['n', 'no', '']:
-            should_download = False
-            break
+            return True
+        if choice in ['n', 'no', '']:
+            return False
+        print("Invalid input. Please enter 'y' or 'n'.")
+
+
+def prompt_process_strategy(after_download):
+    """Asks whether to process all files immediately or choose file selection later."""
+    print("\n--- 5. Processing Strategy ---")
+    if after_download:
+        print("You chose to download pages in this run.")
+        question = "Process all files in the selected course folder after download? (y/n, default: y): "
+    else:
+        print("No download step selected.")
+        question = "Process all files in the selected course folder now? (y/n, default: n): "
+
+    while True:
+        choice = input(question).lower().strip()
+        if after_download:
+            if choice in ['y', 'yes', '']:
+                return 'all'
+            if choice in ['n', 'no']:
+                return 'choose_later'
         else:
-            print("Invalid input. Please enter 'y' or 'n'.")
+            if choice in ['y', 'yes']:
+                return 'all'
+            if choice in ['n', 'no', '']:
+                return 'choose_later'
+        print("Invalid input. Please enter 'y' or 'n'.")
 
-    if not should_download:
-        return
 
-    mhtml_output_dir = workspace_dir / 'input'
-    mhtml_output_dir.mkdir(exist_ok=True)
-
+def download_urls_to_folder(urls_file, mhtml_output_dir):
+    """Downloads URLs from urls.txt into a selected course folder."""
     with open(urls_file, 'r', encoding='utf-8') as f:
         urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
     print(f"Found {len(urls)} URL(s) to process.")
+    downloaded_files = []
     for url in urls:
-        download_url_as_mhtml(url, mhtml_output_dir)
+        downloaded = download_url_as_mhtml(url, mhtml_output_dir)
+        if downloaded:
+            downloaded_files.append(downloaded)
+    return downloaded_files
 
 def run_interactive_wizard():
     """Guides the user through an interactive processing session."""
@@ -261,10 +333,10 @@ def run_interactive_wizard():
 
     workspace_dir = Path(__file__).parent
 
-    # 0. (New) Prompt to download URLs
-    prompt_and_download_urls(workspace_dir)
+    # 1. Ask course number first
+    course_number = prompt_course_number()
 
-    # 1. Select model and connect to provider
+    # 2. Select model and connect to provider
     selected_provider = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
     try:
         selected_provider, selected_model = select_model(
@@ -292,13 +364,48 @@ def run_interactive_wizard():
             print("Please ensure Ollama is running and a model is available.")
         return
 
-    # 2. Select source files
-    files_to_process = select_source_files(workspace_dir)
+    # 3. Ask remaining wizard questions before running
+    urls_file = workspace_dir / 'input' / 'urls.txt'
+    should_download = prompt_should_download(urls_file)
+    process_strategy = prompt_process_strategy(should_download)
+
+    if should_download:
+        # New content is created in a course-specific folder, so no folder selection is needed.
+        selected_course = course_number
+        source_dir = workspace_dir / 'input' / selected_course
+        source_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # If no download is performed, let the user choose which existing course folder to process.
+        default_course = course_number
+        selected_course, source_dir = select_course_folder(workspace_dir, default_course)
+
+    output_dir = workspace_dir / config['output_dir'] / selected_course
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 3. Execute download after all main choices are made
+    if should_download:
+        print(f"\nDownloading to '{source_dir.relative_to(workspace_dir).as_posix()}'...")
+        downloaded_files = download_urls_to_folder(urls_file, source_dir)
+    else:
+        downloaded_files = []
+
+    # 4. Select files only if user asked to choose later
+    if process_strategy == 'choose_later':
+        files_to_process = select_source_files(workspace_dir, source_dir)
+    elif should_download:
+        files_to_process = [f for f in downloaded_files if f.suffix.lower() in {'.mhtml', '.docx'}]
+        if not files_to_process:
+            print("\nNo files were downloaded to process.")
+    else:
+        files_to_process = list_processable_files(source_dir)
+        if not files_to_process:
+            print(f"\nNo processable files found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
+
     if not files_to_process:
         return
 
-    # 3. Process selected files (Always DOCX)
-    process_files(files_to_process, config, client, workspace_dir)
+    # 5. Process selected files
+    process_files(files_to_process, config, client, workspace_dir, output_dir=output_dir, cleanup_temp_docx=True)
 
     # 4. Save choices for next time
     print("\nSaving choices for next run...")
@@ -392,9 +499,11 @@ def main():
 
     process_files(files_to_process, config, client, workspace_dir, source_type_for_processing)
 
-def process_files(files_to_process, config, client, workspace_dir, source_type_override=None):
+def process_files(files_to_process, config, client, workspace_dir, source_type_override=None, output_dir=None, cleanup_temp_docx=False):
     """Loops through a list of files and processes them."""
-    output_dir = workspace_dir / config['output_dir']
+    output_dir = output_dir or (workspace_dir / config['output_dir'])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temp_docx_files = []
 
     for file_path in files_to_process:
         print(f"\n--- Processing: {file_path.name} ---")
@@ -416,6 +525,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
             try:
                 mhtml_to_docx(str(file_path), str(converted_docx_path))
                 processing_file_path = converted_docx_path
+                temp_docx_files.append(converted_docx_path)
                 print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
             except Exception as e:
                 print(f"  [!] MHTML to DOCX conversion failed: {e}")
@@ -459,12 +569,21 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 'total_tokens_generated': total_tokens_generated,
                 'tokens_per_second': tokens_per_second
             }
-            log_file = output_dir / "performance_log.csv"
+            log_file = workspace_dir / config['output_dir'] / "performance_log.csv"
             log_performance_stats(log_file, log_data)
             print(f"  Performance stats logged to: {log_file.name}")
         except Exception as e:
             print(f"  [!] Could not write to performance log: {e}")
         print("--------------------------")
+
+    if cleanup_temp_docx:
+        for temp_file in temp_docx_files:
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+                    print(f"  -> Cleaned up temporary file: {temp_file.name}")
+            except Exception as e:
+                print(f"  [!] Could not remove temporary file '{temp_file.name}': {e}")
 
 if __name__ == "__main__":
     main()

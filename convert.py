@@ -2,6 +2,7 @@ import os
 import sys
 import win32com.client as win32
 
+
 def mhtml_to_docx(input_path, output_path=None, visible=False):
     input_path = os.path.abspath(input_path)
     if output_path is None:
