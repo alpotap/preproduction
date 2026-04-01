@@ -10,9 +10,10 @@ from utils import load_config, save_config, log_performance_stats
 from document_processor import process_docx
 from web_tools import download_url_as_mhtml
 try:
-    from convert import mhtml_to_docx
+    from convert import mhtml_to_docx, pdf_to_docx
 except (ImportError, ModuleNotFoundError):
     mhtml_to_docx = None
+    pdf_to_docx = None
 
 OLLAMA_PROVIDER = "ollama"
 AZURE_PROVIDER = "azure_openai"
@@ -26,17 +27,17 @@ def prompt_course_folder(workspace_dir):
 
     folders = sorted([d.name for d in input_root.iterdir() if d.is_dir()])
 
-    print("\n--- 2. Course Folder ---")
+    print("\n---Enter Course Number (Folder) ---")
     if folders:
-        print("Existing input folders:")
+        print("Existing courses and folders:")
         for i, folder_name in enumerate(folders, start=1):
             print(f"  {i}: {folder_name}")
-    print("Enter a folder name/number (example: 1001).")
+    print("Enter a course/folder name/number (example: 1001). A new number will create new directory under 'input/'.")
 
     while True:
         value = input("Course folder: ").strip()
         if not value:
-            print("Course folder is required.")
+            print("Course number is required.")
             continue
 
         if value.isdigit():
@@ -44,17 +45,17 @@ def prompt_course_folder(workspace_dir):
             if 0 <= idx < len(folders):
                 chosen = folders[idx]
                 selected_dir = input_root / chosen
-                print(f"Using existing folder: {chosen}")
+                print(f"Using existing course: {chosen}")
                 return chosen, selected_dir
 
         if any(ch in value for ch in ('/', '\\\\')):
-            print("Invalid folder name. Do not use path separators.")
+            print("Invalid course name. Do not use path separators.")
             continue
 
         chosen = value
         selected_dir = input_root / chosen
         if selected_dir.exists():
-            print(f"Using existing folder: {chosen}")
+            print(f"Using existing course folder: {chosen}")
         else:
             selected_dir.mkdir(parents=True, exist_ok=True)
             print(f"Created folder: {chosen}")
@@ -66,6 +67,7 @@ def list_processable_files(source_dir):
     return sorted(
         [f for f in source_dir.glob("*.docx") if "_corrected" not in f.name]
         + [f for f in source_dir.glob("*.mhtml") if "_corrected" not in f.name]
+        + [f for f in source_dir.glob("*.pdf")]
     )
 
 
@@ -182,7 +184,7 @@ def select_model(default_model, default_provider, config):
         print("No models found in Ollama. Azure providers are available if configured.")
 
     try:
-        print("\n--- 1. Model Selection ---")
+        print("\n--- Model Selection ---")
         print("Available models:")
         default_index = -1
         normalized_default_provider = normalize_provider(default_provider)
@@ -246,7 +248,7 @@ def format_model_label(model_name, provider):
 
 def prompt_change_model(current_model, current_provider):
     """Asks whether to keep the last used model or choose another one."""
-    print("\n--- 1. AI Model ---")
+    print("\n--- AI Model ---")
     print(f"Last used model: {format_model_label(current_model, current_provider)}")
     while True:
         choice = input("Change model for this run? (y/n, default: n): ").lower().strip()
@@ -261,10 +263,10 @@ def select_source_files(workspace_dir, source_dir):
     all_files = list_processable_files(source_dir)
 
     if not all_files:
-        print(f"\nNo processable files (.docx, .mhtml) found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
+        print(f"\nNo processable files (.docx, .mhtml, .pdf) found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
         return []
 
-    print("\n--- 3. Source Document Selection ---")
+    print("\n--- Source Document Selection ---")
     print(f"Found the following processable files in '{source_dir.relative_to(workspace_dir).as_posix()}':")
     for i, f in enumerate(all_files):
         print(f"  {i+1}: {f.relative_to(workspace_dir).as_posix()}")
@@ -297,7 +299,7 @@ def prompt_should_download(urls_file):
     if not urls_file.exists():
         return False
 
-    print("\n--- 4. Download Web Pages ---")
+    print("\n--- Download Web Pages ---")
     print(f"Found '{urls_file.as_posix()}'.")
     while True:
         choice = input("Download web pages from this file? (y/n, default: n): ").lower().strip()
@@ -310,7 +312,7 @@ def prompt_should_download(urls_file):
 
 def prompt_process_strategy(after_download):
     """Asks whether to process all files immediately or choose file selection later."""
-    print("\n--- 5. Processing Strategy ---")
+    print("\n--- Processing Strategy ---")
     if after_download:
         print("You chose to download pages in this run.")
         question = "Process all files in the selected course folder after download? (y/n, default: y): "
@@ -554,6 +556,27 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
             except Exception as e:
                 print(f"  [!] MHTML to DOCX conversion failed: {e}")
+                print(f"      Ensure MS Word is installed and 'win32com' is working.")
+                print(f"      Skipping file: {file_path.name}")
+                continue
+
+        elif source_type == 'pdf':
+            if pdf_to_docx is None:
+                print("  [!] PDF to DOCX conversion is unavailable.")
+                print("      This feature requires 'pywin32' (Windows only) and MS Word.")
+                print("      To install, run: pip install pywin32")
+                print(f"      Skipping file: {file_path.name}")
+                continue
+
+            print(f"  -> Converting PDF to DOCX using MS Word...")
+            converted_docx_path = file_path.with_suffix('.from_pdf.docx')
+            try:
+                pdf_to_docx(str(file_path), str(converted_docx_path))
+                processing_file_path = converted_docx_path
+                temp_docx_files.append(converted_docx_path)
+                print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
+            except Exception as e:
+                print(f"  [!] PDF to DOCX conversion failed: {e}")
                 print(f"      Ensure MS Word is installed and 'win32com' is working.")
                 print(f"      Skipping file: {file_path.name}")
                 continue
