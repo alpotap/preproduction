@@ -1,11 +1,21 @@
 import difflib
 import time
 import win32com.client as win32
-from llm_service import get_corrections_from_llm
+from document_processor import build_correction_plan
 
 
 WD_FIND_STOP = 0
 MAX_FIND_TEXT_LENGTH = 240
+
+
+def _collect_all_paragraphs_from_docx(doc):
+    """Collect paragraphs from the document body and table cells for Word COM objects."""
+    all_paragraphs = list(doc.Paragraphs)
+    for table in doc.Tables:
+        for row in table.Rows:
+            for cell in row.Cells:
+                all_paragraphs.extend(cell.Range.Paragraphs)
+    return all_paragraphs
 
 
 def _clean_paragraph_text(text):
@@ -91,53 +101,9 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
     return True
 
 
-def _apply_corrections_batch_word(word_doc, batch_items, config, client, stats):
-    """Get corrections from LLM and apply them as tracked changes/comments in Word."""
-    full_text = "\n".join([b['content'] for b in batch_items])
-
-    corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
-    stats["total_tokens_generated"] += tokens
-    stats["total_llm_time"] += llm_time
-
-    for item in batch_items:
-        para = item['para']
-        block_content = item['content']
-        stats["total_text_size"] += len(block_content)
-
-        block_corrections = []
-        for corr in corrections:
-            if corr.get('original') and corr['original'] in block_content:
-                if corr.get('original') != corr.get('corrected'):
-                    block_corrections.append(corr)
-
-        if not block_corrections:
-            continue
-
-        block_corrections.sort(key=lambda x: block_content.find(x['original']))
-        for corr in block_corrections:
-            explanation = (corr.get('explanation') or '').strip()
-            _apply_correction_to_paragraph(
-                word_doc=word_doc,
-                paragraph=para,
-                original=corr['original'],
-                corrected=corr.get('corrected', corr['original']),
-                explanation=explanation,
-                add_comments=config.get('add_comments', True),
-            )
-
-
-def process_docx_tracked(input_path, output_path, config, client):
-    """
-    Process DOCX with Word Track Changes and Word comments.
-    Corrections are proposed as revisions instead of inline text styling.
-    """
+def process_docx_tracked_with_plan(input_path, output_path, correction_plan, config):
+    """Apply a precomputed correction plan to a DOCX using Track Changes and Word comments."""
     print(f"Loading document with Track Changes mode: {input_path}")
-
-    stats = {
-        "total_text_size": 0,
-        "total_llm_time": 0,
-        "total_tokens_generated": 0,
-    }
 
     word = win32.DispatchEx("Word.Application")
     word.Visible = False
@@ -147,35 +113,46 @@ def process_docx_tracked(input_path, output_path, config, client):
         doc = word.Documents.Open(input_path)
         doc.TrackRevisions = True
 
+        # Collect paragraphs from both document body and table cells
+        word_paragraphs = _collect_all_paragraphs_from_docx(doc)
         paragraphs = []
-        for para in doc.Paragraphs:
+        for para in word_paragraphs:
             text = _clean_paragraph_text(para.Range.Text)
             if text:
                 paragraphs.append({'para': para, 'content': text})
 
-        print("Processing document paragraphs with tracked changes...")
+        print("Applying tracked changes from shared correction plan...")
 
-        current_batch = []
-        current_word_count = 0
+        paragraph_cursor = 0
+        for item in correction_plan:
+            block_corrections = item.get('corrections', [])
+            if not block_corrections:
+                continue
 
-        for item in paragraphs:
-            text = item['content']
-            word_count = len(text.split())
+            matched_paragraph = None
+            for idx in range(paragraph_cursor, len(paragraphs)):
+                if paragraphs[idx]['content'] == item['content']:
+                    matched_paragraph = paragraphs[idx]['para']
+                    paragraph_cursor = idx + 1
+                    break
 
-            if current_word_count + word_count > 500 and current_batch:
-                _apply_corrections_batch_word(doc, current_batch, config, client, stats)
-                current_batch = []
-                current_word_count = 0
+            if matched_paragraph is None:
+                continue
 
-            current_batch.append(item)
-            current_word_count += word_count
-
-        if current_batch:
-            _apply_corrections_batch_word(doc, current_batch, config, client, stats)
+            block_corrections.sort(key=lambda x: item['content'].find(x['original']))
+            for corr in block_corrections:
+                explanation = (corr.get('explanation') or '').strip()
+                _apply_correction_to_paragraph(
+                    word_doc=doc,
+                    paragraph=matched_paragraph,
+                    original=corr['original'],
+                    corrected=corr.get('corrected', corr['original']),
+                    explanation=explanation,
+                    add_comments=config.get('add_comments', True),
+                )
 
         doc.SaveAs(output_path, FileFormat=12)
         print(f"\nSuccessfully saved tracked DOCX to: {output_path}")
-        return stats
     finally:
         if doc is not None:
             try:
@@ -186,3 +163,15 @@ def process_docx_tracked(input_path, output_path, config, client):
             word.Quit()
         except Exception:
             pass
+
+
+def process_docx_tracked(input_path, output_path, config, client):
+    """
+    Process DOCX with Word Track Changes and Word comments.
+    Corrections are proposed as revisions instead of inline text styling.
+    """
+    print(f"Loading document with Track Changes mode: {input_path}")
+
+    correction_plan, stats = build_correction_plan(input_path, config, client)
+    process_docx_tracked_with_plan(input_path, output_path, correction_plan, config)
+    return stats

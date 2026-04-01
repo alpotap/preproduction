@@ -6,10 +6,13 @@ This project corrects spelling and grammar in Word documents and web content whi
 
 - Processes `.docx` files directly.
 - Converts `.mhtml` files to `.docx` (Windows + MS Word), then processes them.
+- Converts `.pdf` files to `.docx` (Windows + MS Word), then processes them.
 - Can download URLs to `.mhtml` and process them.
 - Inserts empty lines before and after image paragraphs.
 - Preserves images while applying text corrections.
-- Saves corrected output as `.docx`.
+- Generates **two output formats automatically** from a single LLM pass:
+  - `_corrected_inline.docx` — corrections shown inline with highlighting and deletion markers
+  - `_corrected_track_changes.docx` — corrections shown via Word Track Changes with comments
 - Logs performance to `output/performance_log.csv`.
 
 ## Requirements
@@ -27,18 +30,22 @@ pip install -r requirements.txt
 
 ## Quick start
 
-1. Put input files in `input/`.
+1. Put input files in `input/` or in subdirectories (e.g., `input/1001/`, `input/6360/`, etc.).
 2. Run interactive mode:
 
 ```shell
 py .\process.py
 ```
 
-3. Follow prompts:
-     - Optional URL download from `input/urls.txt`
-     - Model selection
-     - File selection
-4. Find outputs in `output/`.
+3. Follow the interactive prompts:
+   - Choose or create a course folder
+   - View existing files in the selected folder
+   - Optionally change the LLM model (keeps last used by default)
+   - Optionally download URLs from `input/urls.txt`
+   - Choose to process all files now or select specific files
+4. Find outputs in `output/<course_folder>/`:
+   - `<filename>_corrected_inline.docx`
+   - `<filename>_corrected_track_changes.docx`
 
 ## Command-line mode
 
@@ -54,19 +61,34 @@ Process an MHTML:
 py .\process.py --source-type mhtml --input "input\sample.mhtml"
 ```
 
+Process a PDF:
+
+```shell
+py .\process.py --source-type pdf --input "input\sample.pdf"
+```
+
 Download and process a URL:
 
 ```shell
 py .\process.py --source-type url --input "https://example.com"
 ```
 
+**Note:** Both `_corrected_inline.docx` and `_corrected_track_changes.docx` are always generated. The `-track` flag is accepted for backward compatibility but is no longer necessary.
+
 ## Folder layout
 
-- `input/`: source files (`.docx`, `.mhtml`, `urls.txt`)
-- `output/`: corrected files and logs
-- `process.py`: main entry point
-- `document_processor.py`: document text correction and image-safe handling
-- `convert.py`: MHTML to DOCX conversion through Word automation
+- `input/`: source files organized by course folder
+  - `input/urls.txt` — list of URLs to download (optional)
+  - `input/<course_folder>/` — DOCX, MHTML, PDF files to process
+- `output/`: corrected files organized by course folder
+  - `output/<course_folder>/<filename>_corrected_inline.docx` — inline corrections with highlighting
+  - `output/<course_folder>/<filename>_corrected_track_changes.docx` — Track Changes format
+  - `output/performance_log.csv` — performance metrics for all runs
+- `process.py` — main entry point (interactive wizard or CLI mode)
+- `document_processor.py` — builds correction plan and applies inline formatting
+- `tracked_processor.py` — applies corrections via Word Track Changes
+- `convert.py` — MHTML/PDF to DOCX conversion through Word automation
+- `web_tools.py` — URL download to MHTML via Selenium
 
 ## Configuration
 
@@ -164,19 +186,62 @@ If provider initialization fails, the tool prints a recovery hint in terminal ou
 - Paragraphs that include images are updated with image-preserving logic.
 - This prevents inline images from being removed during correction.
 
+## Dual output modes
+
+Both output formats are generated automatically from a **single LLM pass**, eliminating token waste:
+
+- **Inline format** (`_corrected_inline.docx`):
+  - Corrected text shown directly in the document
+  - Additions highlighted in red bold
+  - Deletions marked as `[-deleted_text-]` with strikethrough  
+  - Explanatory comments inserted as Word comments
+  - Useful for reviewing corrections in context
+
+- **Track Changes format** (`_corrected_track_changes.docx`):
+  - Corrections shown via Word's Track Changes feature
+  - Character-level granularity (only changed characters marked)
+  - Explanations attached as Word comments
+  - Useful for formal review workflows where changes can be accepted/rejected individually
+
 ## Troubleshooting
 
-- No model available:
+- **No model available:**
     - Start Ollama and ensure a model is installed.
-- `.mhtml` conversion fails:
+- **Interactive wizard shows no models:**
+    - Ensure Ollama is running OR Azure providers are configured with environment variables.
+- **MHTML/PDF conversion fails:**
     - Ensure Word is installed and `pywin32` is available.
-- Azure OpenAI initialization fails:
+    - Run `pip install pywin32` and restart Python.
+- **Generated DOCX has no Track Changes output:**
+    - Ensure `tracked_processor.py` is present.
+    - If it's missing, only inline corrections will be generated.
+- **Azure OpenAI initialization fails:**
     - Set `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT`.
     - Ensure `Azure Deployment Name` matches your deployed model name in Azure OpenAI.
-- Azure AI Foundry initialization fails:
+- **Azure AI Foundry initialization fails:**
     - Set `AZURE_AI_FOUNDRY_API_KEY` and `AZURE_AI_FOUNDRY_ENDPOINT`.
     - Ensure `Azure AI Foundry Model Name` matches your deployed model name in Azure AI Foundry.
+- **Course folder prompt not appearing:**
+    - The wizard always starts with course folder selection. Check there are no syntax errors in process.py.
+- **File selection shows no processable files:**
+    - Ensure `.docx`, `.mhtml`, or `.pdf` files exist in the selected course folder (not in subdirectories).
+    - Exclude files with `_corrected` in the filename.
+
+## Interactive wizard flow
+
+The interactive wizard (`py process.py`) guides you through these steps:
+
+1. **Course folder selection** — Choose an existing folder or create a new one (e.g., "1001", "6360")
+2. **Show existing files** — Lists files already in the selected course folder
+3. **Model selection (optional)** — Asks if you want to change the LLM model from the last used one
+4. **Download URLs (optional)** — Asks if you want to download from `input/urls.txt`
+5. **Processing strategy** — Asks whether to process all files now or choose specific files later
+6. **File selection (if needed)** — Allows you to select specific files to process
+7. **Processing** — Generates both inline and track-changes outputs
+8. **Save preferences** — Stores your model choice for next run
 
 ## Prompt behavior
 
-Prompts are loaded from `prompts.py` using `Active Prompt` in the configuration section above.
+Prompts are loaded from `prompts.py` using `Active Prompt` in the configuration section. Two templates are provided:
+- `default` — full spelling and grammar correction
+- `grammar_only` — minimal corrections focused on grammar issues only

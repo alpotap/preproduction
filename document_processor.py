@@ -97,6 +97,26 @@ def _build_deletion_marker(deleted_text):
     visible = deleted_text.replace("\n", r"\n")
     return f"[-{visible}-]"
 
+
+def _collect_all_paragraphs(doc):
+    """Collect paragraphs from the document body and table cells."""
+    all_paragraphs = list(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                all_paragraphs.extend(cell.paragraphs)
+    return all_paragraphs
+
+
+def _filter_corrections_for_block(block_content, corrections):
+    """Return corrections that apply to one paragraph/block of text."""
+    block_corrections = []
+    for corr in corrections:
+        if corr.get('original') and corr['original'] in block_content:
+            if corr.get('original') != corr.get('corrected'):
+                block_corrections.append(corr)
+    return block_corrections
+
 def _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config):
     """
     Rewrites the text of a paragraph that contains both text and image runs.
@@ -183,128 +203,142 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
         p.append(r_elem)
 
 
-def apply_corrections_to_batch(batch_items, config, client, stats):
-    """Processes a batch of paragraphs in-place."""
-    # batch_items is a list of dicts: {'para': paragraph_object, 'content': text_string}
-    # Join text for the prompt
+def _apply_inline_corrections_to_paragraph(para, block_content, block_corrections, config):
+    """Apply precomputed corrections to one python-docx paragraph."""
+    if not block_corrections:
+        return
+
+    if _paragraph_contains_image(para):
+        _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config)
+        return
+
+    para.clear()
+    block_corrections.sort(key=lambda x: block_content.find(x['original']))
+
+    last_end = 0
+    for corr in block_corrections:
+        orig = corr['original']
+        start = block_content.find(orig, last_end)
+        if start == -1:
+            continue
+
+        end = start + len(orig)
+        para.add_run(block_content[last_end:start])
+
+        corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
+        matcher = difflib.SequenceMatcher(None, orig, corrected_text)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                para.add_run(corrected_text[j1:j2])
+            elif tag in ('replace', 'insert'):
+                run = para.add_run(corrected_text[j1:j2])
+                if config.get('highlight_corrections', True):
+                    run.bold = True
+                    run.font.color.rgb = RGBColor(255, 0, 0)
+            elif tag == 'delete':
+                deleted_marker = _build_deletion_marker(orig[i1:i2])
+                if deleted_marker:
+                    deleted_run = para.add_run(deleted_marker)
+                    deleted_run.font.strike = True
+                    deleted_run.font.color.rgb = RGBColor(255, 0, 0)
+
+        if config.get('add_comments', True):
+            explanation = corr.get('explanation', '').strip()
+            if explanation:
+                exp_run = para.add_run(f" [{explanation}]")
+                exp_run.italic = True
+                exp_run.font.color.rgb = RGBColor(0, 0, 255)
+
+        last_end = end
+
+    para.add_run(block_content[last_end:])
+
+
+def _plan_corrections_for_batch(batch_items, config, client, stats):
+    """Generate one LLM response for a batch and convert it into per-paragraph corrections."""
     full_text = "\n".join([b['content'] for b in batch_items])
-    
+
     corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
     stats["total_tokens_generated"] += tokens
     stats["total_llm_time"] += llm_time
 
+    planned_items = []
     for item in batch_items:
-        para = item['para']
         block_content = item['content']
-        stats["total_text_size"] += len(item['content'])
-        
-        # Filter corrections relevant to this specific paragraph
-        block_corrections = []
-        for corr in corrections:
-            if corr.get('original') and corr['original'] in block_content:
-                if corr.get('original') != corr.get('corrected'):
-                    block_corrections.append(corr)
-        
-        if not block_corrections:
-            continue
-        
-        if _paragraph_contains_image(para):
-            # Safe path: rewrite text runs while preserving drawing/picture nodes
-            _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config)
-            continue
+        stats["total_text_size"] += len(block_content)
+        planned_items.append({
+            'position': item['position'],
+            'content': block_content,
+            'corrections': _filter_corrections_for_block(block_content, corrections),
+        })
 
-        # Clear the paragraph content to rewrite it with highlights
-        # This preserves the paragraph style and position in the doc
-        para.clear()
-        
-        block_corrections.sort(key=lambda x: block_content.find(x['original']))
-        
-        last_end = 0
-        for corr in block_corrections:
-            orig = corr['original']
-            start = block_content.find(orig, last_end)
-            if start == -1: continue
-            
-            end = start + len(orig)
-            para.add_run(block_content[last_end:start])
-            
-            corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
-            matcher = difflib.SequenceMatcher(None, orig, corrected_text)
-            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                if tag == 'equal':
-                    para.add_run(corrected_text[j1:j2])
-                elif tag == 'replace' or tag == 'insert':
-                    run = para.add_run(corrected_text[j1:j2])
-                    if config.get('highlight_corrections', True):
-                        run.bold = True
-                        run.font.color.rgb = RGBColor(255, 0, 0)
-                elif tag == 'delete':
-                    deleted_marker = _build_deletion_marker(orig[i1:i2])
-                    if deleted_marker:
-                        deleted_run = para.add_run(deleted_marker)
-                        deleted_run.font.strike = True
-                        deleted_run.font.color.rgb = RGBColor(255, 0, 0)
+    return planned_items
 
-            if config.get('add_comments', True):
-                explanation = corr.get('explanation', '').strip()
-                if explanation:
-                    exp_run = para.add_run(f" [{explanation}]")
-                    exp_run.italic = True
-                    exp_run.font.color.rgb = RGBColor(0, 0, 255)
-            
-            last_end = end
-        para.add_run(block_content[last_end:])
 
-def process_docx(input_path, output_path, config, client):
-    """Loads a DOCX, corrects text in-place (preserving images), and saves to output_path."""
+def build_correction_plan(input_path, config, client):
+    """Build a reusable correction plan for a DOCX with a single set of LLM calls."""
     print(f"Loading document: {input_path}")
     doc = Document(input_path)
 
     inserted = _insert_blank_line_before_images(doc)
     if inserted:
         print(f"Inserted {inserted} blank line(s) before image paragraph(s).")
-    
+
     stats = {
         "total_text_size": 0,
         "total_llm_time": 0,
-        "total_tokens_generated": 0
+        "total_tokens_generated": 0,
     }
-    print("Processing document paragraphs...")
+    print("Preparing correction plan...")
 
-    # Collect all paragraphs from document body and tables
-    all_paragraphs = []
-    
-    # Add paragraphs from document body
-    for para in doc.paragraphs:
-        all_paragraphs.append(para)
-    
-    # Add paragraphs from table cells
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    all_paragraphs.append(para)
-
+    all_paragraphs = _collect_all_paragraphs(doc)
     current_batch = []
     current_word_count = 0
-    
-    for para in all_paragraphs:
+    correction_plan = []
+
+    for position, para in enumerate(all_paragraphs):
         text = para.text.strip()
         if not text:
             continue
-            
-        # Add to batch
-        if current_word_count + len(text.split()) > 500 and current_batch:
-            apply_corrections_to_batch(current_batch, config, client, stats)
+
+        item = {'position': position, 'content': para.text}
+        word_count = len(text.split())
+        if current_word_count + word_count > 500 and current_batch:
+            correction_plan.extend(_plan_corrections_for_batch(current_batch, config, client, stats))
             current_batch = []
             current_word_count = 0
-        
-        current_batch.append({'para': para, 'content': para.text})
-        current_word_count += len(text.split())
+
+        current_batch.append(item)
+        current_word_count += word_count
 
     if current_batch:
-        apply_corrections_to_batch(current_batch, config, client, stats)
+        correction_plan.extend(_plan_corrections_for_batch(current_batch, config, client, stats))
+
+    return correction_plan, stats
+
+
+def apply_inline_correction_plan(input_path, output_path, correction_plan, config):
+    """Apply a precomputed correction plan to a DOCX and save inline output."""
+    doc = Document(input_path)
+    _insert_blank_line_before_images(doc)
+    all_paragraphs = _collect_all_paragraphs(doc)
+
+    for item in correction_plan:
+        position = item['position']
+        if position >= len(all_paragraphs):
+            continue
+        _apply_inline_corrections_to_paragraph(
+            all_paragraphs[position],
+            item['content'],
+            item['corrections'],
+            config,
+        )
 
     doc.save(output_path)
     print(f"\nSuccessfully saved corrected DOCX to: {output_path}")
+
+def process_docx(input_path, output_path, config, client):
+    """Loads a DOCX, corrects text in-place (preserving images), and saves to output_path."""
+    correction_plan, stats = build_correction_plan(input_path, config, client)
+    apply_inline_correction_plan(input_path, output_path, correction_plan, config)
     return stats
