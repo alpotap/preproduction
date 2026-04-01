@@ -10,6 +10,10 @@ from utils import load_config, save_config, log_performance_stats
 from document_processor import process_docx
 from web_tools import download_url_as_mhtml
 try:
+    from tracked_processor import process_docx_tracked
+except (ImportError, ModuleNotFoundError):
+    process_docx_tracked = None
+try:
     from convert import mhtml_to_docx, pdf_to_docx
 except (ImportError, ModuleNotFoundError):
     mhtml_to_docx = None
@@ -335,6 +339,24 @@ def prompt_process_strategy(after_download):
         print("Invalid input. Please enter 'y' or 'n'.")
 
 
+def prompt_output_mode(default_use_inline=True):
+    """Asks which output verification style to use for generated DOCX files."""
+    print("\n--- 6. Output Verification Type ---")
+    print("  1: Inline corrections in document text")
+    print("  2: Track Changes + Word comments")
+
+    default_label = "1" if default_use_inline else "2"
+    while True:
+        choice = input(f"Choose output type (press Enter for {default_label}): ").strip()
+        if choice == "":
+            return default_use_inline
+        if choice == "1":
+            return True
+        if choice == "2":
+            return False
+        print("Invalid input. Enter 1 or 2.")
+
+
 def download_urls_to_folder(urls_file, mhtml_output_dir):
     """Downloads URLs from urls.txt into a selected course folder."""
     with open(urls_file, 'r', encoding='utf-8') as f:
@@ -348,7 +370,7 @@ def download_urls_to_folder(urls_file, mhtml_output_dir):
             downloaded_files.append(downloaded)
     return downloaded_files
 
-def run_interactive_wizard():
+def run_interactive_wizard(default_use_inline=True):
     """Guides the user through an interactive processing session."""
     print("--- Starting Interactive Spell-Check Wizard ---")
     
@@ -431,8 +453,19 @@ def run_interactive_wizard():
     if not files_to_process:
         return
 
-    # 5. Process selected files
-    process_files(files_to_process, config, client, workspace_dir, output_dir=output_dir, cleanup_temp_docx=True)
+    # 5. Ask for output type as the final wizard step
+    use_inline = prompt_output_mode(default_use_inline=default_use_inline)
+
+    # 6. Process selected files
+    process_files(
+        files_to_process,
+        config,
+        client,
+        workspace_dir,
+        output_dir=output_dir,
+        cleanup_temp_docx=True,
+        use_inline=use_inline,
+    )
 
     # 4. Save choices for next time
     print("\nSaving choices for next run...")
@@ -444,9 +477,12 @@ def run_interactive_wizard():
     print("\n--- Wizard finished. ---")
 
 def main():
-    # If no arguments are passed, run the interactive wizard
-    if len(sys.argv) == 1:
-        run_interactive_wizard()
+    mode_flag_present = '-track' in sys.argv[1:]
+    non_mode_args = [a for a in sys.argv[1:] if a != '-track']
+
+    # Wizard mode: run as usual, with optional output-mode default via -track.
+    if not non_mode_args:
+        run_interactive_wizard(default_use_inline=not mode_flag_present)
         return
 
     parser = argparse.ArgumentParser(
@@ -464,6 +500,7 @@ def main():
     python process.py --source-type url --input https://example.com
 """
     )
+    parser.add_argument("-track", action="store_true", help="Use Track Changes + comments output mode instead of inline output.")
     parser.add_argument("--source-type", choices=['docx', 'mhtml', 'url'], required=True, help="The type of source to process.")
     parser.add_argument("--input", required=True, help="Path to a single input file or a URL (if --source-type is url).")
     args = parser.parse_args()
@@ -524,9 +561,16 @@ def main():
         print("No files to process.")
         return
 
-    process_files(files_to_process, config, client, workspace_dir, source_type_for_processing)
+    process_files(
+        files_to_process,
+        config,
+        client,
+        workspace_dir,
+        source_type_for_processing,
+        use_inline=not args.track,
+    )
 
-def process_files(files_to_process, config, client, workspace_dir, source_type_override=None, output_dir=None, cleanup_temp_docx=False):
+def process_files(files_to_process, config, client, workspace_dir, source_type_override=None, output_dir=None, cleanup_temp_docx=False, use_inline=True):
     """Loops through a list of files and processes them."""
     output_dir = output_dir or (workspace_dir / config['output_dir'])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -583,9 +627,18 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
 
         # Process the DOCX file directly
         stats = {} # initialize
-        output_path = output_dir / f"{file_path.stem}_corrected.docx"
+        output_suffix = "corrected_inline" if use_inline else "corrected_track_changes"
+        output_path = output_dir / f"{file_path.stem}_{output_suffix}.docx"
         
-        stats = process_docx(str(processing_file_path), str(output_path), config, client)
+        if use_inline:
+            stats = process_docx(str(processing_file_path), str(output_path), config, client)
+        else:
+            if process_docx_tracked is None:
+                print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
+                print("      Falling back to inline processing.")
+                stats = process_docx(str(processing_file_path), str(output_path), config, client)
+            else:
+                stats = process_docx_tracked(str(processing_file_path), str(output_path), config, client)
         
         doc_end_time = time.time()
         total_doc_time = doc_end_time - doc_start_time
