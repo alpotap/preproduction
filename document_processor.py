@@ -97,6 +97,27 @@ def _build_deletion_marker(deleted_text):
     visible = deleted_text.replace("\n", r"\n")
     return f"[-{visible}-]"
 
+
+def _collect_all_paragraphs(doc):
+    """Collect paragraphs from the document body and table cells."""
+    all_paragraphs = list(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                all_paragraphs.extend(cell.paragraphs)
+    return all_paragraphs
+
+
+def _filter_corrections_for_block(block_content, corrections):
+    """Return only corrections that apply to one paragraph/block of text."""
+    block_corrections = []
+    for corr in corrections:
+        original = corr.get('original')
+        corrected = corr.get('corrected', original)
+        if original and original in block_content and original != corrected:
+            block_corrections.append(corr)
+    return block_corrections
+
 def _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config):
     """
     Rewrites the text of a paragraph that contains both text and image runs.
@@ -255,56 +276,162 @@ def apply_corrections_to_batch(batch_items, config, client, stats):
             last_end = end
         para.add_run(block_content[last_end:])
 
-def process_docx(input_path, output_path, config, client):
-    """Loads a DOCX, corrects text in-place (preserving images), and saves to output_path."""
+
+def _apply_inline_corrections_to_paragraph(para, block_content, block_corrections, config):
+    """Apply precomputed corrections to one paragraph in inline mode."""
+    if not block_corrections:
+        return
+
+    if _paragraph_contains_image(para):
+        _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config)
+        return
+
+    para.clear()
+    block_corrections.sort(key=lambda x: block_content.find(x['original']))
+
+    last_end = 0
+    for corr in block_corrections:
+        orig = corr['original']
+        start = block_content.find(orig, last_end)
+        if start == -1:
+            continue
+
+        end = start + len(orig)
+        para.add_run(block_content[last_end:start])
+
+        corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
+        matcher = difflib.SequenceMatcher(None, orig, corrected_text)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                para.add_run(corrected_text[j1:j2])
+            elif tag == 'replace' or tag == 'insert':
+                run = para.add_run(corrected_text[j1:j2])
+                if config.get('highlight_corrections', True):
+                    run.bold = True
+                    run.font.color.rgb = RGBColor(255, 0, 0)
+            elif tag == 'delete':
+                deleted_marker = _build_deletion_marker(orig[i1:i2])
+                if deleted_marker:
+                    deleted_run = para.add_run(deleted_marker)
+                    deleted_run.font.strike = True
+                    deleted_run.font.color.rgb = RGBColor(255, 0, 0)
+
+        if config.get('add_comments', True):
+            explanation = corr.get('explanation', '').strip()
+            if explanation:
+                exp_run = para.add_run(f" [{explanation}]")
+                exp_run.italic = True
+                exp_run.font.color.rgb = RGBColor(0, 0, 255)
+
+        last_end = end
+
+    para.add_run(block_content[last_end:])
+
+
+def build_correction_plan(input_path, config, client):
+    """Build one correction plan from LLM output that can drive multiple renderers."""
+    print(f"Loading document: {input_path}")
+    doc = Document(input_path)
+
+    stats = {
+        "total_text_size": 0,
+        "total_llm_time": 0,
+        "total_tokens_generated": 0,
+    }
+
+    correction_plan = []
+    all_paragraphs = _collect_all_paragraphs(doc)
+
+    current_batch = []
+    current_word_count = 0
+
+    for para in all_paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+
+        if current_word_count + len(text.split()) > 500 and current_batch:
+            full_text = "\n".join([b['content'] for b in current_batch])
+            corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
+            stats["total_tokens_generated"] += tokens
+            stats["total_llm_time"] += llm_time
+
+            for item in current_batch:
+                block_content = item['content']
+                stats["total_text_size"] += len(block_content)
+                correction_plan.append({
+                    'content': block_content,
+                    'corrections': _filter_corrections_for_block(block_content, corrections)
+                })
+
+            current_batch = []
+            current_word_count = 0
+
+        current_batch.append({'content': para.text})
+        current_word_count += len(text.split())
+
+    if current_batch:
+        full_text = "\n".join([b['content'] for b in current_batch])
+        corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
+        stats["total_tokens_generated"] += tokens
+        stats["total_llm_time"] += llm_time
+
+        for item in current_batch:
+            block_content = item['content']
+            stats["total_text_size"] += len(block_content)
+            correction_plan.append({
+                'content': block_content,
+                'corrections': _filter_corrections_for_block(block_content, corrections)
+            })
+
+    return correction_plan, stats
+
+
+def apply_inline_correction_plan(input_path, output_path, correction_plan, config):
+    """Apply a precomputed correction plan to a DOCX in inline format."""
     print(f"Loading document: {input_path}")
     doc = Document(input_path)
 
     inserted = _insert_blank_line_before_images(doc)
     if inserted:
         print(f"Inserted {inserted} blank line(s) before image paragraph(s).")
-    
-    stats = {
-        "total_text_size": 0,
-        "total_llm_time": 0,
-        "total_tokens_generated": 0
-    }
-    print("Processing document paragraphs...")
 
-    # Collect all paragraphs from document body and tables
-    all_paragraphs = []
-    
-    # Add paragraphs from document body
-    for para in doc.paragraphs:
-        all_paragraphs.append(para)
-    
-    # Add paragraphs from table cells
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    all_paragraphs.append(para)
+    print("Applying inline corrections from shared correction plan...")
 
-    current_batch = []
-    current_word_count = 0
-    
+    all_paragraphs = _collect_all_paragraphs(doc)
+    paragraphs = []
     for para in all_paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-            
-        # Add to batch
-        if current_word_count + len(text.split()) > 500 and current_batch:
-            apply_corrections_to_batch(current_batch, config, client, stats)
-            current_batch = []
-            current_word_count = 0
-        
-        current_batch.append({'para': para, 'content': para.text})
-        current_word_count += len(text.split())
+        if para.text and para.text.strip():
+            paragraphs.append({'para': para, 'content': para.text})
 
-    if current_batch:
-        apply_corrections_to_batch(current_batch, config, client, stats)
+    paragraph_cursor = 0
+    for item in correction_plan:
+        block_corrections = item.get('corrections', [])
+        if not block_corrections:
+            continue
+
+        matched_paragraph = None
+        for idx in range(paragraph_cursor, len(paragraphs)):
+            if paragraphs[idx]['content'] == item['content']:
+                matched_paragraph = paragraphs[idx]['para']
+                paragraph_cursor = idx + 1
+                break
+
+        if matched_paragraph is None:
+            continue
+
+        _apply_inline_corrections_to_paragraph(
+            matched_paragraph,
+            item['content'],
+            block_corrections,
+            config,
+        )
 
     doc.save(output_path)
     print(f"\nSuccessfully saved corrected DOCX to: {output_path}")
+
+def process_docx(input_path, output_path, config, client):
+    """Loads a DOCX, corrects text in-place (preserving images), and saves to output_path."""
+    correction_plan, stats = build_correction_plan(input_path, config, client)
+    apply_inline_correction_plan(input_path, output_path, correction_plan, config)
     return stats
