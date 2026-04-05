@@ -7,20 +7,12 @@ from datetime import datetime
 from openai import OpenAI, AzureOpenAI
 
 from utils import load_config, save_config, log_performance_stats
-<<<<<<< HEAD
-from document_processor import build_correction_plan, apply_inline_correction_plan
-from web_tools import download_url_as_mhtml
-try:
-    from tracked_processor import process_docx_tracked_with_plan
-except (ImportError, ModuleNotFoundError):
-=======
 from document_processor import build_correction_plan, apply_inline_correction_plan, process_docx
 from web_tools import download_url_as_mhtml
 try:
     from tracked_processor import process_docx_tracked, process_docx_tracked_with_plan
 except (ImportError, ModuleNotFoundError):
     process_docx_tracked = None
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     process_docx_tracked_with_plan = None
 try:
     from convert import mhtml_to_docx, pdf_to_docx
@@ -445,9 +437,6 @@ def run_interactive_wizard():
         return
 
     # 5. Process selected files
-<<<<<<< HEAD
-    process_files(files_to_process, config, client, workspace_dir, output_dir=output_dir, cleanup_source_mhtml=True)
-=======
     process_files(
         files_to_process,
         config,
@@ -456,7 +445,6 @@ def run_interactive_wizard():
         output_dir=output_dir,
         cleanup_temp_docx=True,
     )
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
 
     # 4. Save choices for next time
     print("\nSaving choices for next run...")
@@ -490,12 +478,8 @@ def main():
     python process.py --source-type url --input https://example.com
 """
     )
-<<<<<<< HEAD
-    parser.add_argument("--source-type", choices=['docx', 'mhtml', 'pdf', 'url'], required=True, help="The type of source to process.")
-=======
     parser.add_argument("-track", action="store_true", help="Accepted for backward compatibility; processing now outputs both inline and track-changes DOCX files.")
     parser.add_argument("--source-type", choices=['docx', 'mhtml', 'url'], required=True, help="The type of source to process.")
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     parser.add_argument("--input", required=True, help="Path to a single input file or a URL (if --source-type is url).")
     args = parser.parse_args()
 
@@ -555,9 +539,6 @@ def main():
         print("No files to process.")
         return
 
-<<<<<<< HEAD
-    process_files(files_to_process, config, client, workspace_dir, source_type_for_processing, cleanup_source_mhtml=True)
-=======
     process_files(
         files_to_process,
         config,
@@ -565,7 +546,6 @@ def main():
         workspace_dir,
         source_type_for_processing,
     )
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
 
 def process_files(files_to_process, config, client, workspace_dir, source_type_override=None, output_dir=None, cleanup_source_mhtml=False):
     """Loops through a list of files and processes them."""
@@ -616,22 +596,24 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 pdf_to_docx(str(file_path), str(converted_docx_path))
                 processing_file_path = converted_docx_path
                 print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
+                
+                # Move the original PDF to a 'pdf' subdirectory
+                pdf_archive_dir = file_path.parent / 'pdf'
+                try:
+                    pdf_archive_dir.mkdir(exist_ok=True)
+                    pdf_destination = pdf_archive_dir / file_path.name
+                    file_path.rename(pdf_destination)
+                    print(f"  -> Moved source PDF to: {pdf_destination.relative_to(workspace_dir).as_posix()}")
+                except Exception as e:
+                    print(f"  [!] Could not move PDF to archive subdirectory: {e}")
             except Exception as e:
                 print(f"  [!] PDF to DOCX conversion failed: {e}")
                 print(f"      Ensure MS Word is installed and 'win32com' is working.")
                 print(f"      Skipping file: {file_path.name}")
                 continue
 
-<<<<<<< HEAD
-        # Build corrections once, then apply to both output variants.
-        stats = {} # initialize
-        inline_output_path = output_dir / f"{file_path.stem}_corrected_inline.docx"
-        tracked_output_path = output_dir / f"{file_path.stem}_corrected_track_changes.docx"
-
-=======
         # Build corrections once, then apply them to both output styles.
         stats = {} # initialize
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
         try:
             correction_plan, stats = build_correction_plan(str(processing_file_path), config, client)
         except Exception as e:
@@ -639,12 +621,9 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
             print(f"      Skipping file: {file_path.name}")
             continue
 
-<<<<<<< HEAD
-=======
         inline_output_path = output_dir / f"{file_path.stem}_corrected_inline.docx"
         tracked_output_path = output_dir / f"{file_path.stem}_corrected_track_changes.docx"
 
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
         try:
             apply_inline_correction_plan(str(processing_file_path), str(inline_output_path), correction_plan, config)
         except Exception as e:
