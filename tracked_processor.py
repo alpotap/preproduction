@@ -1,11 +1,6 @@
 import difflib
-<<<<<<< HEAD
 import win32com.client as win32
 
-=======
-import time
-import win32com.client as win32
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
 from document_processor import build_correction_plan
 
 
@@ -13,19 +8,6 @@ WD_FIND_STOP = 0
 MAX_FIND_TEXT_LENGTH = 240
 
 
-<<<<<<< HEAD
-=======
-def _collect_all_paragraphs_from_docx(doc):
-    """Collect paragraphs from the document body and table cells for Word COM objects."""
-    all_paragraphs = list(doc.Paragraphs)
-    for table in doc.Tables:
-        for row in table.Rows:
-            for cell in row.Cells:
-                all_paragraphs.extend(cell.Range.Paragraphs)
-    return all_paragraphs
-
-
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
 def _clean_paragraph_text(text):
     """Normalize Word paragraph text for LLM processing and matching."""
     if not text:
@@ -42,7 +24,6 @@ def _trim_paragraph_end_markers(text):
     return text
 
 
-<<<<<<< HEAD
 def _collect_all_paragraphs_from_docx(doc):
     """Collect paragraphs from the document body and table cells for Word COM objects."""
     all_paragraphs = list(doc.Paragraphs)
@@ -53,30 +34,20 @@ def _collect_all_paragraphs_from_docx(doc):
     return all_paragraphs
 
 
-=======
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
 def _apply_diff_to_range(word_doc, target_range, original, corrected):
     """Apply minimal tracked edits to a Word range using a character diff."""
     base_start = target_range.Start
     matcher = difflib.SequenceMatcher(None, original, corrected)
 
     for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
-<<<<<<< HEAD
         if tag == "equal":
-=======
-        if tag == 'equal':
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
             continue
 
         edit_start = base_start + i1
         edit_end = base_start + i2
         replacement_text = corrected[j1:j2]
 
-<<<<<<< HEAD
         if tag == "insert":
-=======
-        if tag == 'insert':
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
             edit_range = word_doc.Range(Start=edit_start, End=edit_start)
             edit_range.Text = replacement_text
             continue
@@ -91,19 +62,11 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
         return False
 
     para_range = paragraph.Range.Duplicate
-<<<<<<< HEAD
-=======
-    # Exclude paragraph mark from search range.
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     if para_range.End > para_range.Start:
         para_range.End = para_range.End - 1
 
     target = None
 
-<<<<<<< HEAD
-=======
-    # Fast path: Word Find API for shorter strings.
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     if len(original) <= MAX_FIND_TEXT_LENGTH:
         try:
             find = para_range.Find
@@ -116,10 +79,6 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
         except Exception:
             target = None
 
-<<<<<<< HEAD
-=======
-    # Fallback path: direct range by character offsets for long strings.
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     if target is None:
         raw_para_text = _trim_paragraph_end_markers(paragraph.Range.Text)
         start_idx = raw_para_text.find(original)
@@ -135,19 +94,11 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
             pass
 
     _apply_diff_to_range(word_doc, target, original, corrected)
-<<<<<<< HEAD
-=======
-
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     return True
 
 
 def process_docx_tracked_with_plan(input_path, output_path, correction_plan, config):
-<<<<<<< HEAD
     """Apply a precomputed correction plan to a DOCX using Track Changes and comments."""
-=======
-    """Apply a precomputed correction plan to a DOCX using Track Changes and Word comments."""
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     print(f"Loading document with Track Changes mode: {input_path}")
 
     word = win32.DispatchEx("Word.Application")
@@ -158,51 +109,31 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
         doc = word.Documents.Open(input_path)
         doc.TrackRevisions = True
 
-<<<<<<< HEAD
-=======
-        # Collect paragraphs from both document body and table cells
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
         word_paragraphs = _collect_all_paragraphs_from_docx(doc)
         paragraphs = []
         for para in word_paragraphs:
             text = _clean_paragraph_text(para.Range.Text)
             if text:
-<<<<<<< HEAD
                 paragraphs.append({"para": para, "content": text})
-
-        print("Applying tracked changes...")
-
-        paragraph_cursor = 0
-        for item in correction_plan:
-            block_corrections = item.get("corrections", [])
-=======
-                paragraphs.append({'para': para, 'content': text})
 
         print("Applying tracked changes from shared correction plan...")
 
         paragraph_cursor = 0
         for item in correction_plan:
-            block_corrections = item.get('corrections', [])
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
+            block_corrections = item.get("corrections", [])
             if not block_corrections:
                 continue
 
             matched_paragraph = None
             for idx in range(paragraph_cursor, len(paragraphs)):
-<<<<<<< HEAD
                 if paragraphs[idx]["content"] == item["content"]:
                     matched_paragraph = paragraphs[idx]["para"]
-=======
-                if paragraphs[idx]['content'] == item['content']:
-                    matched_paragraph = paragraphs[idx]['para']
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
                     paragraph_cursor = idx + 1
                     break
 
             if matched_paragraph is None:
                 continue
 
-<<<<<<< HEAD
             block_corrections.sort(key=lambda x: item["content"].find(x["original"]))
             for corr in block_corrections:
                 explanation = (corr.get("explanation") or "").strip()
@@ -213,18 +144,6 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
                     corrected=corr.get("corrected", corr["original"]),
                     explanation=explanation,
                     add_comments=config.get("add_comments", True),
-=======
-            block_corrections.sort(key=lambda x: item['content'].find(x['original']))
-            for corr in block_corrections:
-                explanation = (corr.get('explanation') or '').strip()
-                _apply_correction_to_paragraph(
-                    word_doc=doc,
-                    paragraph=matched_paragraph,
-                    original=corr['original'],
-                    corrected=corr.get('corrected', corr['original']),
-                    explanation=explanation,
-                    add_comments=config.get('add_comments', True),
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
                 )
 
         doc.SaveAs(output_path, FileFormat=12)
@@ -242,16 +161,7 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
 
 
 def process_docx_tracked(input_path, output_path, config, client):
-<<<<<<< HEAD
     """Process DOCX with Word Track Changes and comments, including table content."""
-=======
-    """
-    Process DOCX with Word Track Changes and Word comments.
-    Corrections are proposed as revisions instead of inline text styling.
-    """
-    print(f"Loading document with Track Changes mode: {input_path}")
-
->>>>>>> 7818e761f20734210061f3ed7cd701e25598a849
     correction_plan, stats = build_correction_plan(input_path, config, client)
     process_docx_tracked_with_plan(input_path, output_path, correction_plan, config)
     return stats

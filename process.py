@@ -443,7 +443,7 @@ def run_interactive_wizard():
         client,
         workspace_dir,
         output_dir=output_dir,
-        cleanup_temp_docx=True,
+        cleanup_source_mhtml=True,
     )
 
     # 4. Save choices for next time
