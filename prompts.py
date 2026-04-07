@@ -10,8 +10,15 @@ Output ONLY a JSON list of objects.
 Example: [{{"explanation": "reason", "original": "text", "corrected": "text"}}].
 Return [] if no errors."""
 
-PROMPTS = {
-    "default": f"""
+DEFAULT_PROMPT_KEY = "default"
+
+PROMPT_DEFINITIONS = {
+    "default": {
+        "name": "Full Copy Edit",
+        "abbr": "FCE",
+        "summary": "Checks spelling, grammar, punctuation, voice, and clarity while preserving meaning.",
+        "max_input_words": 500,
+        "template": f"""
 You are a professional copy editor. Your task is to thoroughly review every sentence of the following {{language}} text and apply corrections based on Microsoft Style Guide principles.
 
 Review each sentence for ALL of the following — do not skip any category:
@@ -25,7 +32,13 @@ Review each sentence for ALL of the following — do not skip any category:
 
 Text: {{text}}
 """,
-    "grammar_only": f"""
+    },
+    "grammar_only": {
+        "name": "Grammar And Mechanics",
+        "abbr": "SaG",
+        "summary": "Checks spelling, grammar, and punctuation only; avoids style rewrites.",
+        "max_input_words": 500,
+        "template": f"""
 You are a professional copy editor. Carefully check every sentence of the following {{language}} text for spelling, grammar, and punctuation errors.
 
 Review each sentence for ALL of the following — do not skip any category:
@@ -37,5 +50,172 @@ Do not suggest stylistic changes or voice changes.
 {JSON_OUTPUT_INSTRUCTIONS}
 
 Text: {{text}}
-"""
+""",
+    },
+    "redundancy_analysis": {
+        "name": "Redundancy Analysis",
+        "abbr": "RA",
+        "summary": "Finds repeated or redundant paragraphs and proposes concise alternatives.",
+        "max_input_words": 100000,
+        "template": f"""
+You are a document quality analyst. Review the following {{language}} text and identify redundancy issues.
+
+Return only actionable edits as JSON objects with fields:
+- explanation: why this paragraph/sentence is redundant
+- original: exact redundant text span from input
+- corrected: concise replacement text (or empty string if removal is best)
+
+Do not invent content. Preserve technical terms and meaning.
+{JSON_OUTPUT_INSTRUCTIONS}
+
+Text: {{text}}
+""",
+    },
+    "terminology_consistency": {
+        "name": "Terminology Consistency Validation",
+        "abbr": "TCV",
+        "summary": "Identifies inconsistent usage of defined terms, acronyms, and named entities across the document and aligns them to a single existing form.",
+        "max_input_words": 15000,
+        "template": """You are a terminology consistency reviewer. Analyze the following {language} text to identify inconsistent usage of terms, acronyms, product names, or technical entities that refer to the same concept.
+
+Tasks:
+• Detect multiple variants of the same term (e.g., acronym vs spelled-out form, capitalization differences).
+• Determine whether one variant is used as the primary form in the document.
+• Propose corrections that align inconsistent usages to an existing form already present in the text.
+
+Strict Constraints:
+• DO NOT invent new terms or terminology.
+• DO NOT rewrite sentences beyond the minimal change required for consistency.
+• PRESERVE technical meaning, abbreviations, and proper nouns exactly.
+• NO stylistic or grammatical rewrites unless required solely for consistency.
+• NO anthropomorphic language.
+
+Output ONLY a JSON list of objects.
+Each object must include:
+- explanation: why the usage is inconsistent
+- original: the exact text span with inconsistent usage
+- corrected: the aligned replacement using an existing variant
+
+Return [] if no issues are found.
+
+Text: {text}""",
+    },
+    "structural_integrity": {
+        "name": "Structural Integrity Validation",
+        "abbr": "SIV",
+        "summary": "Validates heading hierarchy, section ordering, and overall document structure for logical and organizational correctness.",
+        "max_input_words": 60000,
+        "template": """You are a document structure validator. Examine the following {language} document for structural integrity issues.
+
+Tasks:
+• Verify correct heading hierarchy (e.g., no skipped levels such as jumping from H1 to H3).
+• Identify orphaned or empty sections.
+• Detect missing required sections or illogical section ordering.
+• Ensure section titles accurately reflect their contents at a high level.
+
+Strict Constraints:
+• DO NOT rewrite or rephrase content.
+• DO NOT propose new sections unless they are clearly missing based on existing structure.
+• DO NOT change wording inside sections.
+• NO anthropomorphic language.
+
+Output ONLY a JSON list of objects.
+Each object must include:
+- explanation: description of the structural issue
+- original: the exact heading or structural element involved
+- corrected: a minimal structural correction suggestion (or empty string if manual author decision is required)
+
+Return [] if no issues are found.
+
+Text: {text}""",
+    },
+    "cross_reference_validation": {
+        "name": "Cross-Reference and Citation Validation",
+        "abbr": "CRV",
+        "summary": "Checks internal references, citations, and section links for existence, correctness, and consistency within the document.",
+        "max_input_words": 80000,
+        "template": """You are an internal cross-reference validator. Review the following {language} document and validate all internal references.
+
+Tasks:
+• Verify that all referenced sections, figures, tables, or appendices exist.
+• Detect broken, missing, or mismatched references (e.g., incorrect numbering or naming).
+• Identify references whose targets have been renamed or removed.
+
+Strict Constraints:
+• DO NOT invent new references or targets.
+• DO NOT correct content beyond resolving reference mismatches.
+• DO NOT rewrite prose.
+• NO anthropomorphic language.
+
+Output ONLY a JSON list of objects.
+Each object must include:
+- explanation: description of the reference issue
+- original: the exact reference text as written
+- corrected: the corrected reference text, or empty string if the target cannot be determined
+
+Return [] if no issues are found.
+
+Text: {text}""",
+    },
+    "audience_tone_alignment": {
+        "name": "Audience and Tone Alignment Check",
+        "abbr": "ATA",
+        "summary": "Identifies sections whose tone, register, or terminology does not match the intended audience or document purpose.",
+        "max_input_words": 8000,
+        "template": """You are an audience and tone alignment reviewer. Evaluate the following {language} text to determine whether the tone and register are consistent with the intended audience and document purpose.
+
+Tasks:
+• Identify sections that are overly informal, overly technical, or mismatched to the target audience.
+• Detect inconsistent tone shifts across sections.
+• Highlight jargon usage that may be inappropriate for the stated audience.
+
+Strict Constraints:
+• DO NOT rewrite or rephrase text.
+• DO NOT suggest stylistic improvements unless identifying a mismatch.
+• Provide observations only; corrections may be indications rather than replacements.
+• NO anthropomorphic language.
+
+Output ONLY a JSON list of objects.
+Each object must include:
+- explanation: description of the tone or audience mismatch
+- original: the exact text span exhibiting the issue
+- corrected: empty string unless a minimal, audience-aligned alternative is explicitly implied by surrounding text
+
+Return [] if no issues are found.
+
+Text: {text}""",
+    },
 }
+
+PROMPTS = {
+    key: definition["template"]
+    for key, definition in PROMPT_DEFINITIONS.items()
+}
+
+
+def get_prompt_definition(prompt_key):
+    """Returns prompt metadata for a key, falling back to default prompt."""
+    if prompt_key in PROMPT_DEFINITIONS:
+        return PROMPT_DEFINITIONS[prompt_key]
+    return PROMPT_DEFINITIONS.get(DEFAULT_PROMPT_KEY, {})
+
+
+def get_prompt_max_input_words(prompt_key, fallback=500):
+    """Returns prompt-specific max input size in words used for batching."""
+    definition = get_prompt_definition(prompt_key)
+    value = definition.get("max_input_words", fallback)
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        value = fallback
+    return max(1, value)
+
+
+def get_prompt_abbreviation(prompt_key, fallback="GEN"):
+    """Returns prompt-specific abbreviation for output filenames."""
+    definition = get_prompt_definition(prompt_key)
+    value = str(definition.get("abbr", fallback)).strip()
+    if not value:
+        return fallback
+    return "".join(ch for ch in value if ch.isalnum()) or fallback
+    

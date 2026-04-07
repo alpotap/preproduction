@@ -2,18 +2,19 @@ import time
 import json
 import re
 try:
-    from prompts import PROMPTS
+    from prompts import PROMPTS, DEFAULT_PROMPT_KEY
 except ImportError:
     PROMPTS = {}
+    DEFAULT_PROMPT_KEY = "default"
 
 def get_corrections_from_llm(text, config, client):
     """Sends text to the local LLM and returns a list of corrections, token count, and duration."""
     
     # Load prompt from prompts.py based on config, fallback to default if key missing
-    prompt_key = config.get('active_prompt', 'default')
+    prompt_key = config.get('active_prompt', DEFAULT_PROMPT_KEY)
     prompt_template = PROMPTS.get(prompt_key)
     if not prompt_template:
-        prompt_template = PROMPTS.get('default', "Copy edit this {language} text. Return JSON corrections. Text: {text}")
+        prompt_template = PROMPTS.get(DEFAULT_PROMPT_KEY, "Copy edit this {language} text. Return JSON corrections. Text: {text}")
     
     prompt = prompt_template.format(language=config['language'], text=text)
 

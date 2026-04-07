@@ -10,6 +10,19 @@ from utils import load_config, save_config, log_performance_stats
 from document_processor import build_correction_plan, apply_inline_correction_plan, process_docx
 from web_tools import download_url_as_mhtml
 try:
+    from prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation
+except (ImportError, ModuleNotFoundError):
+    DEFAULT_PROMPT_KEY = "default"
+    PROMPT_DEFINITIONS = {
+        "default": {
+            "name": "Default",
+            "summary": "General spelling and grammar correction.",
+        }
+    }
+
+    def get_prompt_abbreviation(prompt_key, fallback="GEN"):
+        return fallback
+try:
     from tracked_processor import process_docx_tracked, process_docx_tracked_with_plan
 except (ImportError, ModuleNotFoundError):
     process_docx_tracked = None
@@ -74,8 +87,6 @@ def list_processable_files(source_dir):
             f
             for f in source_dir.glob("*.docx")
             if "_corrected" not in f.name
-            and not f.name.endswith(".from_mhtml.docx")
-            and not f.name.endswith(".from_pdf.docx")
         ]
         + [f for f in source_dir.glob("*.mhtml") if "_corrected" not in f.name]
         + [f for f in source_dir.glob("*.pdf")]
@@ -176,10 +187,15 @@ def create_client(provider, config):
 
 
 def fetch_ollama_models():
-    """Fetches available model IDs from Ollama, returning an empty list on failure."""
+    """Fetches available model IDs from Ollama, returning an empty list on failure.
+    
+    Developer note: Each model object contains id, context, and other metadata fields.
+    We extract only the 'id' for user-facing display.
+    """
     try:
         client = create_client(OLLAMA_PROVIDER, {})
         models_response = client.models.list()
+        # Extract only model.id for user display; id and context fields available in raw objects
         return [m.id for m in models_response.data] if models_response.data else []
     except Exception as e:
         print(f"Could not fetch models from Ollama: {e}")
@@ -209,6 +225,7 @@ def select_model(default_model, default_provider, config):
         print("Available models:")
         default_index = -1
         normalized_default_provider = normalize_provider(default_provider)
+        # Display only model name to users (id and context fields kept internal for developers)
         for i, (provider, model_name) in enumerate(options):
             if provider == AZURE_PROVIDER:
                 provider_label = "Azure OpenAI"
@@ -278,6 +295,97 @@ def prompt_change_model(current_model, current_provider):
         if choice in ['n', 'no', '']:
             return False
         print("Invalid input. Please enter 'y' or 'n'.")
+
+
+def normalize_prompt_key(prompt_key):
+    """Returns a valid prompt key, falling back to DEFAULT_PROMPT_KEY."""
+    if prompt_key in PROMPT_DEFINITIONS:
+        return prompt_key
+    return DEFAULT_PROMPT_KEY if DEFAULT_PROMPT_KEY in PROMPT_DEFINITIONS else next(iter(PROMPT_DEFINITIONS.keys()))
+
+
+def prompt_select_prompt_type(current_prompt_key):
+    """Lets the user select the prompt type shown by name and summary."""
+    print("\n--- Prompt Type ---")
+
+    options = list(PROMPT_DEFINITIONS.items())
+    default_key = normalize_prompt_key(current_prompt_key)
+    default_meta = PROMPT_DEFINITIONS.get(default_key, {})
+    default_label = f"{default_meta.get('name', default_key)} (id: {default_key})"
+
+    for i, (prompt_key, meta) in enumerate(options, start=1):
+        name = meta.get('name', prompt_key)
+        summary = meta.get('summary', '')
+        max_words = meta.get('max_input_words')
+        suffix = " (default)" if prompt_key == default_key else ""
+        print(f"  {i}: {name} (id: {prompt_key}){suffix}")
+        if summary:
+            print(f"     {summary}")
+        if max_words is not None:
+            print(f"     Context: up to {max_words} words per LLM request")
+
+    selection = input(f"Select prompt type number (press Enter for default: {default_label}): ").strip()
+    if not selection:
+        return default_key
+
+    try:
+        index = int(selection) - 1
+        if 0 <= index < len(options):
+            return options[index][0]
+    except ValueError:
+        pass
+
+    print("Invalid input. Using default prompt type.")
+    return default_key
+
+
+def prompt_level_a_task():
+    """Level A menu for selecting high-level task."""
+    print("\n--- Level A: Select A Task ---")
+    print("  1: Process files")
+    print("  2: Download and process files")
+    print("  3: Change LLM provider/model")
+
+    while True:
+        choice = input("Choose task number (1/2/3): ").strip()
+        if choice in {"1", "2", "3"}:
+            return choice
+        print("Invalid input. Enter one of: 1, 2, 3.")
+
+
+def prompt_level_d_file_selection(workspace_dir, source_dir):
+    """Level D file selection: all files or a numeric list."""
+    all_files = list_processable_files(source_dir)
+    if not all_files:
+        print(f"\nNo processable files (.docx, .mhtml, .pdf) found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
+        return []
+
+    print("\n--- Level D: Select Files ---")
+    print(f"Found the following processable files in '{source_dir.relative_to(workspace_dir).as_posix()}':")
+    for i, f in enumerate(all_files, start=1):
+        print(f"  {i}: {f.relative_to(workspace_dir).as_posix()}")
+
+    print("\nEnter 'all' to process all files, or enter numbers like '1 2 3'. Press Enter to cancel.")
+    selection = input("> ").strip().lower()
+    if not selection:
+        print("No files selected. Exiting.")
+        return []
+    if selection == 'all':
+        return all_files
+
+    selected_files = []
+    try:
+        indices = [int(i) - 1 for i in selection.split()]
+        for i in sorted(set(indices)):
+            if 0 <= i < len(all_files):
+                selected_files.append(all_files[i])
+            else:
+                print(f"Warning: Invalid number '{i+1}' ignored.")
+    except ValueError:
+        print("Invalid input. Please enter 'all' or numbers separated by spaces.")
+        return []
+
+    return selected_files
 
 def select_source_files(workspace_dir, source_dir):
     """Scans for processable files in source_dir and lets the user select them."""
@@ -375,6 +483,7 @@ def run_interactive_wizard():
     
     config = load_config()
     config['llm_provider'] = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
+    config['active_prompt'] = normalize_prompt_key(config.get('active_prompt', DEFAULT_PROMPT_KEY))
     if config['llm_provider'] == AZURE_PROVIDER:
         azure_settings = get_azure_settings(config)
         if azure_settings['deployment_name']:
@@ -386,73 +495,99 @@ def run_interactive_wizard():
 
     workspace_dir = Path(__file__).parent
 
-    # 1. Choose/create course folder first
-    selected_course, source_dir = prompt_course_folder(workspace_dir)
-    show_existing_files_for_course(workspace_dir, source_dir)
+    while True:
+        task_key = prompt_level_a_task()
 
-    # 2. Optionally change model, otherwise keep last used model
-    selected_provider = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
-    should_change_model = prompt_change_model(config['llm_model'], selected_provider)
-    try:
-        if should_change_model:
+        if task_key == '3':
+            previous_provider = config['llm_provider']
+            previous_model = config['llm_model']
+
             selected_provider, selected_model = select_model(
                 config['llm_model'],
                 config.get('llm_provider', OLLAMA_PROVIDER),
                 config,
             )
-            config['llm_provider'] = normalize_provider(selected_provider)
+            selected_provider = normalize_provider(selected_provider)
+
+            config['llm_provider'] = selected_provider
             config['llm_model'] = selected_model
             if config['llm_provider'] == AZURE_PROVIDER:
                 config['llm_model'] = get_azure_settings(config)['deployment_name'] or selected_model
             elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
                 config['llm_model'] = get_azure_ai_foundry_settings(config)['model_name'] or selected_model
-        else:
-            config['llm_provider'] = selected_provider
 
+            try:
+                validate_provider_config(config['llm_provider'], config)
+                client = create_client(config['llm_provider'], config)
+                if config['llm_provider'] == OLLAMA_PROVIDER:
+                    client.models.list()
+                save_config({
+                    'llm_provider': config['llm_provider'],
+                    'llm_model': config['llm_model'],
+                    'active_prompt': config['active_prompt']
+                })
+                print(f"Saved model: {format_model_label(config['llm_model'], config['llm_provider'])}")
+            except Exception as e:
+                config['llm_provider'] = previous_provider
+                config['llm_model'] = previous_model
+                print(f"\nError: Could not initialize {selected_provider} client: {e}")
+                if selected_provider == AZURE_PROVIDER:
+                    print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
+                elif selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
+                    print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+                else:
+                    print("Please ensure Ollama is running and a model is available.")
+
+            print("Returning to Level A menu...")
+            continue
+
+        run_download = (task_key == '2')
+        break
+
+    try:
         validate_provider_config(config['llm_provider'], config)
         client = create_client(config['llm_provider'], config)
         print(f"Using model: {format_model_label(config['llm_model'], config['llm_provider'])}")
     except Exception as e:
-        print(f"\nError: Could not initialize {selected_provider} client: {e}")
-        if selected_provider == AZURE_PROVIDER:
+        provider = config['llm_provider']
+        print(f"\nError: Could not initialize {provider} client: {e}")
+        if provider == AZURE_PROVIDER:
             print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
-        elif selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        elif provider == AZURE_AI_FOUNDRY_PROVIDER:
             print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
         else:
             print("Please ensure Ollama is running and a model is available.")
         return
 
-    # 3. Ask remaining wizard questions before running
-    urls_file = workspace_dir / 'input' / 'urls.txt'
-    should_download = prompt_should_download(urls_file)
-    process_strategy = prompt_process_strategy(should_download)
+    print("\n--- Level B: Select Or Create Folder ---")
+    selected_course, source_dir = prompt_course_folder(workspace_dir)
+    show_existing_files_for_course(workspace_dir, source_dir)
+
+    print("\n--- Level C: Select Prompt Type ---")
+    config['active_prompt'] = prompt_select_prompt_type(config.get('active_prompt', DEFAULT_PROMPT_KEY))
+    selected_prompt = PROMPT_DEFINITIONS.get(config['active_prompt'], {})
+    print(f"Using prompt: {selected_prompt.get('name', config['active_prompt'])} [{config['active_prompt']}]")
+    save_config({
+        'llm_provider': config['llm_provider'],
+        'llm_model': config['llm_model'],
+        'active_prompt': config['active_prompt']
+    })
+
+    if run_download:
+        urls_file = workspace_dir / 'input' / 'urls.txt'
+        if not urls_file.exists():
+            print(f"\nCould not find URLs file: {urls_file.as_posix()}")
+            return
+        print(f"\nDownloading to '{source_dir.relative_to(workspace_dir).as_posix()}'...")
+        download_urls_to_folder(urls_file, source_dir)
+
+    files_to_process = prompt_level_d_file_selection(workspace_dir, source_dir)
+    if not files_to_process:
+        return
 
     output_dir = workspace_dir / config['output_dir'] / selected_course
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3. Execute download after all main choices are made
-    if should_download:
-        print(f"\nDownloading to '{source_dir.relative_to(workspace_dir).as_posix()}'...")
-        downloaded_files = download_urls_to_folder(urls_file, source_dir)
-    else:
-        downloaded_files = []
-
-    # 4. Select files only if user asked to choose later
-    if process_strategy == 'choose_later':
-        files_to_process = select_source_files(workspace_dir, source_dir)
-    elif should_download:
-        files_to_process = list_processable_files(source_dir)
-        if not files_to_process:
-            print("\nNo files were downloaded to process.")
-    else:
-        files_to_process = list_processable_files(source_dir)
-        if not files_to_process:
-            print(f"\nNo processable files found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
-
-    if not files_to_process:
-        return
-
-    # 5. Process selected files
     process_files(
         files_to_process,
         config,
@@ -466,7 +601,8 @@ def run_interactive_wizard():
     print("\nSaving choices for next run...")
     save_config({
         'llm_provider': config['llm_provider'],
-        'llm_model': config['llm_model']
+        'llm_model': config['llm_model'],
+        'active_prompt': config['active_prompt']
     })
 
     print("\n--- Wizard finished. ---")
@@ -501,6 +637,7 @@ def main():
 
     config = load_config()
     config['llm_provider'] = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
+    config['active_prompt'] = normalize_prompt_key(config.get('active_prompt', DEFAULT_PROMPT_KEY))
     if config['llm_provider'] == AZURE_PROVIDER:
         azure_settings = get_azure_settings(config)
         if azure_settings['deployment_name']:
@@ -638,8 +775,9 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
             continue
 
         output_stem = build_output_stem(file_path)
-        inline_output_path = output_dir / f"{output_stem}_corrected_inline.docx"
-        tracked_output_path = output_dir / f"{output_stem}_corrected_track_changes.docx"
+        prompt_abbr = get_prompt_abbreviation(config.get('active_prompt', DEFAULT_PROMPT_KEY), fallback="GEN")
+        inline_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_inline.docx"
+        tracked_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_track_changes.docx"
 
         try:
             apply_inline_correction_plan(str(processing_file_path), str(inline_output_path), correction_plan, config)

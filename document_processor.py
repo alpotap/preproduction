@@ -5,6 +5,13 @@ from docx import Document
 from docx.shared import RGBColor
 from docx.oxml.ns import qn
 from llm_service import get_corrections_from_llm
+try:
+    from prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
+except (ImportError, ModuleNotFoundError):
+    DEFAULT_PROMPT_KEY = "default"
+
+    def get_prompt_max_input_words(prompt_key, fallback=500):
+        return fallback
 
 
 def _paragraph_contains_image(paragraph):
@@ -267,6 +274,9 @@ def build_correction_plan(input_path, config, client):
     """Build one correction plan from LLM output that can drive multiple renderers."""
     print(f"Loading document: {input_path}")
     doc = Document(input_path)
+    prompt_key = config.get('active_prompt', DEFAULT_PROMPT_KEY)
+    max_input_words = get_prompt_max_input_words(prompt_key, fallback=500)
+    print(f"Using prompt context size: {max_input_words} words")
 
     stats = {
         "total_text_size": 0,
@@ -285,7 +295,7 @@ def build_correction_plan(input_path, config, client):
         if not text:
             continue
 
-        if current_word_count + len(text.split()) > 500 and current_batch:
+        if current_word_count + len(text.split()) > max_input_words and current_batch:
             _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats)
 
             current_batch = []
