@@ -70,10 +70,26 @@ def prompt_course_folder(workspace_dir):
 def list_processable_files(source_dir):
     """Returns sorted processable files from a source folder."""
     return sorted(
-        [f for f in source_dir.glob("*.docx") if "_corrected" not in f.name]
+        [
+            f
+            for f in source_dir.glob("*.docx")
+            if "_corrected" not in f.name
+            and not f.name.endswith(".from_mhtml.docx")
+            and not f.name.endswith(".from_pdf.docx")
+        ]
         + [f for f in source_dir.glob("*.mhtml") if "_corrected" not in f.name]
         + [f for f in source_dir.glob("*.pdf")]
     )
+
+
+def build_output_stem(file_path):
+    """Returns a stable output stem without conversion-source suffixes."""
+    stem = file_path.stem
+    for suffix in (".from_mhtml", ".from_pdf"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return stem
 
 
 def show_existing_files_for_course(workspace_dir, source_dir):
@@ -621,8 +637,9 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
             print(f"      Skipping file: {file_path.name}")
             continue
 
-        inline_output_path = output_dir / f"{file_path.stem}_corrected_inline.docx"
-        tracked_output_path = output_dir / f"{file_path.stem}_corrected_track_changes.docx"
+        output_stem = build_output_stem(file_path)
+        inline_output_path = output_dir / f"{output_stem}_corrected_inline.docx"
+        tracked_output_path = output_dir / f"{output_stem}_corrected_track_changes.docx"
 
         try:
             apply_inline_correction_plan(str(processing_file_path), str(inline_output_path), correction_plan, config)

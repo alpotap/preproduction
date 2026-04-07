@@ -196,71 +196,20 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
         p.append(r_elem)
 
 
-def apply_corrections_to_batch(batch_items, config, client, stats):
-    """Processes a batch of paragraphs in-place."""
-    full_text = "\n".join([b['content'] for b in batch_items])
-    
+def _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats):
+    """Gets LLM corrections for one batch and appends normalized entries to correction_plan."""
+    full_text = "\n".join([b['content'] for b in current_batch])
     corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
     stats["total_tokens_generated"] += tokens
     stats["total_llm_time"] += llm_time
 
-    for item in batch_items:
-        para = item['para']
+    for item in current_batch:
         block_content = item['content']
-        stats["total_text_size"] += len(item['content'])
-        
-        block_corrections = []
-        for corr in corrections:
-            if corr.get('original') and corr['original'] in block_content:
-                if corr.get('original') != corr.get('corrected'):
-                    block_corrections.append(corr)
-        
-        if not block_corrections:
-            continue
-        
-        if _paragraph_contains_image(para):
-            _rewrite_paragraph_preserving_images(para, block_content, block_corrections, config)
-            continue
-
-        para.clear()
-        
-        block_corrections.sort(key=lambda x: block_content.find(x['original']))
-        
-        last_end = 0
-        for corr in block_corrections:
-            orig = corr['original']
-            start = block_content.find(orig, last_end)
-            if start == -1: continue
-            
-            end = start + len(orig)
-            para.add_run(block_content[last_end:start])
-            
-            corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
-            matcher = difflib.SequenceMatcher(None, orig, corrected_text)
-            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                if tag == 'equal':
-                    para.add_run(corrected_text[j1:j2])
-                elif tag == 'replace' or tag == 'insert':
-                    run = para.add_run(corrected_text[j1:j2])
-                    if config.get('highlight_corrections', True):
-                        run.bold = True
-                        run.font.color.rgb = RGBColor(255, 0, 0)
-                elif tag == 'delete':
-                    deleted_marker = _build_deletion_marker(orig[i1:i2])
-                    if deleted_marker:
-                        deleted_run = para.add_run(deleted_marker)
-                        deleted_run.font.strike = True
-                        deleted_run.font.color.rgb = RGBColor(255, 0, 0)
-
-            if config.get('add_comments', True):
-                explanation = corr.get('explanation', '').strip()
-                if explanation:
-                    exp_run = para.add_run(f" [{explanation}]")
-                    exp_run.italic = True
-                    exp_run.font.color.rgb = RGBColor(0, 0, 255)
-            
-            last_end = end
-        para.add_run(block_content[last_end:])
+        stats["total_text_size"] += len(block_content)
+        correction_plan.append({
+            'content': block_content,
+            'corrections': _filter_corrections_for_block(block_content, corrections)
+        })
 
 
 def _apply_inline_corrections_to_paragraph(para, block_content, block_corrections, config):
@@ -337,18 +286,7 @@ def build_correction_plan(input_path, config, client):
             continue
 
         if current_word_count + len(text.split()) > 500 and current_batch:
-            full_text = "\n".join([b['content'] for b in current_batch])
-            corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
-            stats["total_tokens_generated"] += tokens
-            stats["total_llm_time"] += llm_time
-
-            for item in current_batch:
-                block_content = item['content']
-                stats["total_text_size"] += len(block_content)
-                correction_plan.append({
-                    'content': block_content,
-                    'corrections': _filter_corrections_for_block(block_content, corrections)
-                })
+            _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats)
 
             current_batch = []
             current_word_count = 0
@@ -357,18 +295,7 @@ def build_correction_plan(input_path, config, client):
         current_word_count += len(text.split())
 
     if current_batch:
-        full_text = "\n".join([b['content'] for b in current_batch])
-        corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
-        stats["total_tokens_generated"] += tokens
-        stats["total_llm_time"] += llm_time
-
-        for item in current_batch:
-            block_content = item['content']
-            stats["total_text_size"] += len(block_content)
-            correction_plan.append({
-                'content': block_content,
-                'corrections': _filter_corrections_for_block(block_content, corrections)
-            })
+        _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats)
 
     return correction_plan, stats
 
@@ -385,10 +312,11 @@ def apply_inline_correction_plan(input_path, output_path, correction_plan, confi
     print("Applying inline corrections from shared correction plan...")
 
     all_paragraphs = _collect_all_paragraphs(doc)
-    paragraphs = []
-    for para in all_paragraphs:
-        if para.text and para.text.strip():
-            paragraphs.append({'para': para, 'content': para.text})
+    paragraphs = [
+        {'para': para, 'content': para.text}
+        for para in all_paragraphs
+        if para.text and para.text.strip()
+    ]
 
     paragraph_cursor = 0
     for item in correction_plan:
