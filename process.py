@@ -7,7 +7,7 @@ from datetime import datetime
 from openai import OpenAI, AzureOpenAI
 
 from utils import load_config, save_config, log_performance_stats
-from document_processor import build_correction_plan, apply_inline_correction_plan, process_docx
+from document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan, process_docx
 from web_tools import download_url_as_mhtml
 try:
     from prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation
@@ -32,6 +32,10 @@ try:
 except (ImportError, ModuleNotFoundError):
     mhtml_to_docx = None
     pdf_to_docx = None
+try:
+    from consistency_full_tool import run_full_consistency
+except (ImportError, ModuleNotFoundError):
+    run_full_consistency = None
 
 OLLAMA_PROVIDER = "ollama"
 AZURE_PROVIDER = "azure_openai"
@@ -311,18 +315,15 @@ def prompt_select_prompt_type(current_prompt_key):
     options = list(PROMPT_DEFINITIONS.items())
     default_key = normalize_prompt_key(current_prompt_key)
     default_meta = PROMPT_DEFINITIONS.get(default_key, {})
-    default_label = f"{default_meta.get('name', default_key)} (id: {default_key})"
+    default_label = default_meta.get('name', default_key)
 
     for i, (prompt_key, meta) in enumerate(options, start=1):
         name = meta.get('name', prompt_key)
         summary = meta.get('summary', '')
-        max_words = meta.get('max_input_words')
         suffix = " (default)" if prompt_key == default_key else ""
-        print(f"  {i}: {name} (id: {prompt_key}){suffix}")
+        print(f"  {i}: {name}{suffix}")
         if summary:
             print(f"     {summary}")
-        if max_words is not None:
-            print(f"     Context: up to {max_words} words per LLM request")
 
     selection = input(f"Select prompt type number (press Enter for default: {default_label}): ").strip()
     if not selection:
@@ -345,12 +346,13 @@ def prompt_level_a_task():
     print("  1: Process files")
     print("  2: Download and process files")
     print("  3: Change LLM provider/model")
+    print("  4: Run cross-document consistency analysis")
 
     while True:
-        choice = input("Choose task number (1/2/3): ").strip()
-        if choice in {"1", "2", "3"}:
+        choice = input("Choose task number (1/2/3/4): ").strip()
+        if choice in {"1", "2", "3", "4"}:
             return choice
-        print("Invalid input. Enter one of: 1, 2, 3.")
+        print("Invalid input. Enter one of: 1, 2, 3, 4.")
 
 
 def prompt_level_d_file_selection(workspace_dir, source_dir):
@@ -494,6 +496,7 @@ def run_interactive_wizard():
             config['llm_model'] = foundry_settings['model_name']
 
     workspace_dir = Path(__file__).parent
+    run_consistency_only = False
 
     while True:
         task_key = prompt_level_a_task()
@@ -542,6 +545,7 @@ def run_interactive_wizard():
             continue
 
         run_download = (task_key == '2')
+        run_consistency_only = (task_key == '4')
         break
 
     try:
@@ -562,6 +566,29 @@ def run_interactive_wizard():
     print("\n--- Level B: Select Or Create Folder ---")
     selected_course, source_dir = prompt_course_folder(workspace_dir)
     show_existing_files_for_course(workspace_dir, source_dir)
+
+    if run_consistency_only:
+        if run_full_consistency is None:
+            print("\nConsistency tools are unavailable. Ensure consistency_full_tool.py is present.")
+            return
+
+        consistency_output_dir = workspace_dir / config['output_dir'] / selected_course / "consistency"
+        consistency_docx = consistency_output_dir / "consistency_analysis.docx"
+        print(f"\nRunning cross-document consistency analysis for '{source_dir.relative_to(workspace_dir).as_posix()}'...")
+
+        try:
+            results = run_full_consistency(source_dir, consistency_output_dir, consistency_docx)
+            print("\n--- Consistency Analysis Completed ---")
+            print(f"Documents scanned: {results['document_count']}")
+            print(f"Metadata JSON: {Path(results['metadata_json']).relative_to(workspace_dir).as_posix()}")
+            print(f"Documents CSV: {Path(results['documents_csv']).relative_to(workspace_dir).as_posix()}")
+            print(f"Keywords CSV: {Path(results['keywords_csv']).relative_to(workspace_dir).as_posix()}")
+            print(f"Product names CSV: {Path(results['product_names_csv']).relative_to(workspace_dir).as_posix()}")
+            print(f"Analysis DOCX: {Path(results['analysis_docx']).relative_to(workspace_dir).as_posix()}")
+            print(f"Model used: {results['model_used']} ({results['provider_used']})")
+        except Exception as e:
+            print(f"\nConsistency analysis failed: {e}")
+        return
 
     print("\n--- Level C: Select Prompt Type ---")
     config['active_prompt'] = prompt_select_prompt_type(config.get('active_prompt', DEFAULT_PROMPT_KEY))
@@ -765,7 +792,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 print(f"      Skipping file: {file_path.name}")
                 continue
 
-        # Build corrections once, then apply them to both output styles.
+        # Build corrections once, then apply them to all output styles.
         stats = {} # initialize
         try:
             correction_plan, stats = build_correction_plan(str(processing_file_path), config, client)
@@ -778,6 +805,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
         prompt_abbr = get_prompt_abbreviation(config.get('active_prompt', DEFAULT_PROMPT_KEY), fallback="GEN")
         inline_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_inline.docx"
         tracked_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_track_changes.docx"
+        hybrid_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_hybrid.docx"
 
         try:
             apply_inline_correction_plan(str(processing_file_path), str(inline_output_path), correction_plan, config)
@@ -792,6 +820,11 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 process_docx_tracked_with_plan(str(processing_file_path), str(tracked_output_path), correction_plan, config)
             except Exception as e:
                 print(f"  [!] Track Changes DOCX output failed: {e}")
+
+        try:
+            apply_hybrid_correction_plan(str(processing_file_path), str(hybrid_output_path), correction_plan, config)
+        except Exception as e:
+            print(f"  [!] Hybrid DOCX output failed: {e}")
         
         doc_end_time = time.time()
         total_doc_time = doc_end_time - doc_start_time
