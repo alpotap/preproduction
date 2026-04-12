@@ -1,3 +1,5 @@
+"""Runs LLM-assisted cross-document consistency analysis and writes report outputs."""
+
 import argparse
 import json
 import os

@@ -1,3 +1,5 @@
+"""Benchmark helper for running the processor against multiple local models."""
+
 import subprocess
 import sys
 from pathlib import Path

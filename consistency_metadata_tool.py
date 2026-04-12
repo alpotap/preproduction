@@ -1,3 +1,5 @@
+"""Scans document sets and extracts normalized metadata for consistency analysis."""
+
 import argparse
 import csv
 import json

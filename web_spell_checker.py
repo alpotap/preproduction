@@ -1,3 +1,5 @@
+"""Processes saved web content into corrected Markdown using the same LLM pipeline."""
+
 import os
 import re
 from pathlib import Path
@@ -73,7 +75,7 @@ def create_corrected_md(structured_content, config, client):
     for item in structured_content:
         item_type = item['type']
         original_text = item['text']
-        corrections = get_corrections_from_llm(original_text, config, client)
+        corrections, _input_tokens, _output_tokens, _llm_time = get_corrections_from_llm(original_text, config, client)
         corrected_text = original_text
         changes_made = []
         for corr in sorted(corrections, key=lambda x: original_text.find(x['original']), reverse=True):

@@ -1,3 +1,5 @@
+"""Converts PDF and MHTML sources into DOCX using Microsoft Word automation."""
+
 import os
 import sys
 import win32com.client as win32

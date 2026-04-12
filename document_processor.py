@@ -1,3 +1,5 @@
+"""Builds shared correction plans and renders inline and hybrid DOCX outputs."""
+
 import difflib
 import copy
 from lxml import etree
@@ -95,9 +97,9 @@ def _preserve_soft_breaks(original_text, corrected_text):
     return break_char.join(chunks)
 
 
-def _build_deletion_marker(deleted_text):
+def _build_deletion_marker(deleted_text, show_marker=True):
     """Builds a visible marker for deleted text so removals are obvious in output."""
-    if not deleted_text:
+    if not deleted_text or not show_marker:
         return ""
     visible = deleted_text.replace("\n", r"\n")
     return f"[-{visible}-]"
@@ -185,7 +187,10 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
                 else:
                     _add_run_elem(corrected_text[j1:j2])
             elif tag == 'delete':
-                deleted_marker = _build_deletion_marker(orig[i1:i2])
+                deleted_marker = _build_deletion_marker(
+                    orig[i1:i2],
+                    show_marker=config.get('show_deletion_markers', True),
+                )
                 if deleted_marker:
                     _add_run_elem(deleted_marker, color='FF0000', strike=True)
 
@@ -206,8 +211,9 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
 def _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats):
     """Gets LLM corrections for one batch and appends normalized entries to correction_plan."""
     full_text = "\n".join([b['content'] for b in current_batch])
-    corrections, tokens, llm_time = get_corrections_from_llm(full_text, config, client)
-    stats["total_tokens_generated"] += tokens
+    corrections, input_tokens, output_tokens, llm_time = get_corrections_from_llm(full_text, config, client)
+    stats["total_input_tokens"] += input_tokens
+    stats["total_tokens_generated"] += output_tokens
     stats["total_llm_time"] += llm_time
 
     for item in current_batch:
@@ -252,7 +258,10 @@ def _apply_inline_corrections_to_paragraph(para, block_content, block_correction
                     run.bold = True
                     run.font.color.rgb = RGBColor(255, 0, 0)
             elif tag == 'delete':
-                deleted_marker = _build_deletion_marker(orig[i1:i2])
+                deleted_marker = _build_deletion_marker(
+                    orig[i1:i2],
+                    show_marker=config.get('show_deletion_markers', True),
+                )
                 if deleted_marker:
                     deleted_run = para.add_run(deleted_marker)
                     deleted_run.font.strike = True
@@ -281,6 +290,7 @@ def build_correction_plan(input_path, config, client):
     stats = {
         "total_text_size": 0,
         "total_llm_time": 0,
+        "total_input_tokens": 0,
         "total_tokens_generated": 0,
     }
 
@@ -385,6 +395,29 @@ def _apply_hybrid_corrections_to_paragraph(para, block_content, block_correction
         hybrid_config = dict(config)
         hybrid_config['add_comments'] = False
         _rewrite_paragraph_preserving_images(para, block_content, block_corrections, hybrid_config)
+        # Gather all explanations and attach them as a single comment spanning the
+        # paragraph, since individual run anchoring is not feasible after the rewrite.
+        explanations = [
+            corr.get('explanation', '').strip()
+            for corr in block_corrections
+            if corr.get('explanation', '').strip()
+        ]
+        if explanations:
+            p = para._p
+            comment_id = len(comment_collector)
+            comment_start = etree.Element(qn('w:commentRangeStart'))
+            comment_start.set(qn('w:id'), str(comment_id))
+            p.insert(0, comment_start)
+            comment_end = etree.Element(qn('w:commentRangeEnd'))
+            comment_end.set(qn('w:id'), str(comment_id))
+            p.append(comment_end)
+            ref_run = etree.SubElement(p, qn('w:r'))
+            ref_rpr = etree.SubElement(ref_run, qn('w:rPr'))
+            ref_style = etree.SubElement(ref_rpr, qn('w:rStyle'))
+            ref_style.set(qn('w:val'), 'CommentReference')
+            comment_ref = etree.SubElement(ref_run, qn('w:commentReference'))
+            comment_ref.set(qn('w:id'), str(comment_id))
+            comment_collector.append((comment_id, ' | '.join(explanations)))
         return
 
     para.clear()
@@ -422,7 +455,10 @@ def _apply_hybrid_corrections_to_paragraph(para, block_content, block_correction
                     run.bold = True
                     run.font.color.rgb = RGBColor(255, 0, 0)
             elif tag == 'delete':
-                deleted_marker = _build_deletion_marker(orig[i1:i2])
+                deleted_marker = _build_deletion_marker(
+                    orig[i1:i2],
+                    show_marker=config.get('show_deletion_markers', True),
+                )
                 if deleted_marker:
                     deleted_run = para.add_run(deleted_marker)
                     deleted_run.font.strike = True

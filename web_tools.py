@@ -1,3 +1,5 @@
+"""Downloads web pages to MHTML and extracts cleaned HTML text when needed."""
+
 import os
 import re
 import time

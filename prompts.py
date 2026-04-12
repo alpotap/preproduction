@@ -1,3 +1,5 @@
+"""Defines prompt templates and metadata used by document processing workflows."""
+
 # Shared components for prompts
 CONSTRAINTS = """
 Strict Constraints:
@@ -47,6 +49,31 @@ Review each sentence for ALL of the following — do not skip any category:
 • Punctuation errors (missing commas, incorrect apostrophes, double spaces)
 Do not suggest stylistic changes or voice changes.
 {CONSTRAINTS}
+{JSON_OUTPUT_INSTRUCTIONS}
+
+Text: {{text}}
+""",
+    },
+    "paragraph_rewrite": {
+        "name": "Paragraph Revision",
+        "abbr": "PR",
+        "summary": "Analyzes text and rewrites full paragraphs when broader changes are needed for clarity or correctness.",
+        "max_input_words": 1200,
+        "template": f"""
+You are a professional copy editor. Review the following {{language}} text and improve it when sentence-level edits are not enough.
+
+Tasks:
+• Analyze the text for grammar, punctuation, clarity, structure, and paragraph-level flow issues.
+• When needed, rewrite the full paragraph instead of proposing only small phrase edits.
+• Prefer minimal corrections when they are sufficient, but allow full paragraph replacement when it produces a clearly better result.
+
+Strict Constraints:
+• PRESERVE technical meaning, product names, acronyms, and commands exactly unless they are clearly incorrect.
+• DO NOT invent new facts.
+• DO NOT expand content beyond what is needed to improve correctness or clarity.
+• Return paragraph-level replacements only when justified.
+• NO anthropomorphic language.
+
 {JSON_OUTPUT_INSTRUCTIONS}
 
 Text: {{text}}

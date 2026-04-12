@@ -1,3 +1,5 @@
+"""Main entry point for document processing, model selection, and output generation."""
+
 import argparse
 import os
 import sys
@@ -38,8 +40,56 @@ except (ImportError, ModuleNotFoundError):
     run_full_consistency = None
 
 OLLAMA_PROVIDER = "ollama"
+LM_STUDIO_PROVIDER = "lm_studio"
 AZURE_PROVIDER = "azure_openai"
 AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
+
+OUTPUT_TYPE_REGISTRY = {
+    "inline": {
+        "label": "Inline (with comments)",
+        "suffix": "corrected_inline.docx",
+    },
+    "uncommented": {
+        "label": "Inline (no comments)",
+        "suffix": "corrected_uncommented.docx",
+    },
+    "track_changes": {
+        "label": "Track Changes",
+        "suffix": "corrected_track_changes.docx",
+    },
+    "hybrid": {
+        "label": "Hybrid (inline + Word comments)",
+        "suffix": "corrected_hybrid.docx",
+    },
+}
+DEFAULT_OUTPUT_TYPES = ["inline", "track_changes", "hybrid"]
+
+
+def normalize_output_types(output_types):
+    """Return valid output types in registry order; fallback to defaults."""
+    if isinstance(output_types, str):
+        requested = [x.strip().lower() for x in output_types.split(',') if x.strip()]
+    elif isinstance(output_types, (list, tuple, set)):
+        requested = [str(x).strip().lower() for x in output_types if str(x).strip()]
+    else:
+        requested = []
+
+    requested_set = set(requested)
+    normalized = [key for key in OUTPUT_TYPE_REGISTRY if key in requested_set]
+    if not normalized:
+        return list(DEFAULT_OUTPUT_TYPES)
+    return normalized
+
+
+def serialize_output_types(output_types):
+    """Serialize selected output types for config persistence."""
+    return ", ".join(normalize_output_types(output_types))
+
+
+def format_output_types(output_types):
+    """Human-readable labels for selected output types."""
+    selected = normalize_output_types(output_types)
+    return ", ".join(OUTPUT_TYPE_REGISTRY[key]["label"] for key in selected)
 
 
 def prompt_course_folder(workspace_dir):
@@ -125,6 +175,8 @@ def normalize_provider(provider):
         return AZURE_PROVIDER
     if provider in {"azure_ai_foundry", "foundry"}:
         return AZURE_AI_FOUNDRY_PROVIDER
+    if provider in {"lm_studio", "lmstudio", "local", "local_lm_studio"}:
+        return LM_STUDIO_PROVIDER
     return OLLAMA_PROVIDER
 
 
@@ -147,6 +199,20 @@ def get_azure_ai_foundry_settings(config):
     }
 
 
+def get_lm_studio_settings(config):
+    """Loads LM Studio settings from env/config."""
+    base_url = (
+        os.getenv("LM_STUDIO_BASE_URL")
+        or config.get("lm_studio_base_url", "http://127.0.0.1:1234/v1")
+    ).strip()
+    if base_url and not base_url.rstrip("/").endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
+    return {
+        "base_url": base_url.rstrip("/"),
+        "model_name": config.get("lm_studio_model_name", "").strip(),
+    }
+
+
 def validate_provider_config(provider, config):
     """Validates provider-specific configuration before processing."""
     normalized_provider = normalize_provider(provider)
@@ -158,6 +224,9 @@ def validate_provider_config(provider, config):
         foundry_settings = get_azure_ai_foundry_settings(config)
         if not foundry_settings["model_name"]:
             raise RuntimeError("Missing Azure AI Foundry Model Name in configuration.")
+    elif normalized_provider == LM_STUDIO_PROVIDER:
+        if not config.get('llm_model', '').strip():
+            raise RuntimeError("Missing LM Studio model selection. Choose a model from the wizard.")
 
 
 def create_client(provider, config):
@@ -186,6 +255,14 @@ def create_client(provider, config):
             api_key=foundry_settings["api_key"],
             base_url=foundry_settings["endpoint"].rstrip("/"),
         )
+    elif normalized_provider == LM_STUDIO_PROVIDER:
+        lm_studio_settings = get_lm_studio_settings(config)
+        if not lm_studio_settings["base_url"]:
+            raise RuntimeError("Missing LM Studio base URL in configuration.")
+        return OpenAI(
+            api_key=os.getenv("LM_STUDIO_API_KEY", "lm-studio"),
+            base_url=lm_studio_settings["base_url"],
+        )
 
     return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
@@ -206,10 +283,23 @@ def fetch_ollama_models():
         return []
 
 
+def fetch_lm_studio_models(config):
+    """Fetches available model IDs from LM Studio, returning an empty list on failure."""
+    try:
+        client = create_client(LM_STUDIO_PROVIDER, config)
+        models_response = client.models.list()
+        return [m.id for m in models_response.data] if models_response.data else []
+    except Exception as e:
+        print(f"Could not fetch models from LM Studio: {e}")
+        return []
+
+
 def select_model(default_model, default_provider, config):
     """Lists available models and lets the user select provider/model."""
-    models = fetch_ollama_models()
-    options = [(OLLAMA_PROVIDER, model_name) for model_name in models]
+    ollama_models = fetch_ollama_models()
+    lm_studio_models = fetch_lm_studio_models(config)
+    options = [(OLLAMA_PROVIDER, model_name) for model_name in ollama_models]
+    options.extend((LM_STUDIO_PROVIDER, model_name) for model_name in lm_studio_models)
     
     azure_settings = get_azure_settings(config)
     if azure_settings["deployment_name"]:
@@ -219,10 +309,16 @@ def select_model(default_model, default_provider, config):
     if foundry_settings["model_name"]:
         options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_settings["model_name"]))
     
-    if not models and not azure_settings["deployment_name"] and not foundry_settings["model_name"]:
-        print("No models found. Ensure Ollama is running and/or configure Azure provider.")
-    elif not models:
-        print("No models found in Ollama. Azure providers are available if configured.")
+    lm_studio_settings = get_lm_studio_settings(config)
+    if lm_studio_models:
+        print(f"LM Studio server reachable at {lm_studio_settings['base_url']}; model(s): {', '.join(lm_studio_models)}")
+    else:
+        print(f"LM Studio unavailable or has no loaded model at {lm_studio_settings['base_url']}.")
+
+    if not ollama_models and not lm_studio_models and not azure_settings["deployment_name"] and not foundry_settings["model_name"]:
+        print("No models found. Ensure Ollama/LM Studio is running and/or configure Azure provider.")
+    elif not ollama_models and not lm_studio_models:
+        print("No models found in local providers (Ollama/LM Studio). Azure providers are available if configured.")
 
     try:
         print("\n--- Model Selection ---")
@@ -235,6 +331,8 @@ def select_model(default_model, default_provider, config):
                 provider_label = "Azure OpenAI"
             elif provider == AZURE_AI_FOUNDRY_PROVIDER:
                 provider_label = "Azure AI Foundry"
+            elif provider == LM_STUDIO_PROVIDER:
+                provider_label = "LM Studio"
             else:
                 provider_label = "Ollama"
             label = f"{model_name} ({provider_label})"
@@ -249,6 +347,8 @@ def select_model(default_model, default_provider, config):
             default_label = f"{default_model} (Azure OpenAI)"
         elif normalized_default_provider == AZURE_AI_FOUNDRY_PROVIDER:
             default_label = f"{default_model} (Azure AI Foundry)"
+        elif normalized_default_provider == LM_STUDIO_PROVIDER:
+            default_label = f"{default_model} (LM Studio)"
         elif default_model:
             default_label = f"{default_model} (Ollama)"
 
@@ -283,6 +383,8 @@ def format_model_label(model_name, provider):
         provider_label = "Azure OpenAI"
     elif normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
         provider_label = "Azure AI Foundry"
+    elif normalized_provider == LM_STUDIO_PROVIDER:
+        provider_label = "LM Studio"
     else:
         provider_label = "Ollama"
     return f"{model_name} ({provider_label})"
@@ -347,12 +449,57 @@ def prompt_level_a_task():
     print("  2: Download and process files")
     print("  3: Change LLM provider/model")
     print("  4: Run cross-document consistency analysis")
+    print("  5: Select output types")
 
     while True:
-        choice = input("Choose task number (1/2/3/4): ").strip()
-        if choice in {"1", "2", "3", "4"}:
+        choice = input("Choose task number (1/2/3/4/5): ").strip()
+        if choice in {"1", "2", "3", "4", "5"}:
             return choice
-        print("Invalid input. Enter one of: 1, 2, 3, 4.")
+        print("Invalid input. Enter one of: 1, 2, 3, 4, 5.")
+
+
+def prompt_select_output_types(current_output_types):
+    """Prompt user for multi-select output types; returns normalized key list."""
+    current = normalize_output_types(current_output_types)
+    options = list(OUTPUT_TYPE_REGISTRY.items())
+
+    print("\n--- Output Types ---")
+    print("Select one or more output types by number (example: 1 3 4).")
+    print("Type 'all' to select all output types. Press Enter to keep current selection.")
+    print("Current selection:")
+    for key in current:
+        print(f"  - {OUTPUT_TYPE_REGISTRY[key]['label']} [{key}]")
+
+    print("\nAvailable output types:")
+    for idx, (key, meta) in enumerate(options, start=1):
+        selected_marker = "x" if key in current else " "
+        print(f"  {idx}: [{selected_marker}] {meta['label']} ({key})")
+
+    while True:
+        raw = input("Select output types: ").strip().lower()
+        if not raw:
+            return current
+        if raw == "all":
+            return list(OUTPUT_TYPE_REGISTRY.keys())
+
+        try:
+            picked_indices = sorted(set(int(part) - 1 for part in raw.split()))
+        except ValueError:
+            print("Invalid input. Enter numbers separated by spaces, or 'all'.")
+            continue
+
+        selected = []
+        for i in picked_indices:
+            if 0 <= i < len(options):
+                selected.append(options[i][0])
+            else:
+                print(f"Invalid selection '{i+1}' ignored.")
+
+        selected = normalize_output_types(selected)
+        if selected:
+            return selected
+
+        print("At least one output type must be selected.")
 
 
 def prompt_level_d_file_selection(workspace_dir, source_dir):
@@ -486,6 +633,7 @@ def run_interactive_wizard():
     config = load_config()
     config['llm_provider'] = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
     config['active_prompt'] = normalize_prompt_key(config.get('active_prompt', DEFAULT_PROMPT_KEY))
+    config['output_types'] = normalize_output_types(config.get('output_types', DEFAULT_OUTPUT_TYPES))
     if config['llm_provider'] == AZURE_PROVIDER:
         azure_settings = get_azure_settings(config)
         if azure_settings['deployment_name']:
@@ -494,6 +642,10 @@ def run_interactive_wizard():
         foundry_settings = get_azure_ai_foundry_settings(config)
         if foundry_settings['model_name']:
             config['llm_model'] = foundry_settings['model_name']
+    elif config['llm_provider'] == LM_STUDIO_PROVIDER:
+        lm_studio_settings = get_lm_studio_settings(config)
+        if lm_studio_settings['model_name']:
+            config['llm_model'] = lm_studio_settings['model_name']
 
     workspace_dir = Path(__file__).parent
     run_consistency_only = False
@@ -518,15 +670,19 @@ def run_interactive_wizard():
                 config['llm_model'] = get_azure_settings(config)['deployment_name'] or selected_model
             elif config['llm_provider'] == AZURE_AI_FOUNDRY_PROVIDER:
                 config['llm_model'] = get_azure_ai_foundry_settings(config)['model_name'] or selected_model
+            elif config['llm_provider'] == LM_STUDIO_PROVIDER:
+                config['llm_model'] = selected_model
+                config['lm_studio_model_name'] = selected_model
 
             try:
                 validate_provider_config(config['llm_provider'], config)
                 client = create_client(config['llm_provider'], config)
-                if config['llm_provider'] == OLLAMA_PROVIDER:
+                if config['llm_provider'] in {OLLAMA_PROVIDER, LM_STUDIO_PROVIDER}:
                     client.models.list()
                 save_config({
                     'llm_provider': config['llm_provider'],
                     'llm_model': config['llm_model'],
+                    'lm_studio_model_name': config.get('lm_studio_model_name', ''),
                     'active_prompt': config['active_prompt']
                 })
                 print(f"Saved model: {format_model_label(config['llm_model'], config['llm_provider'])}")
@@ -538,9 +694,20 @@ def run_interactive_wizard():
                     print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
                 elif selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
                     print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+                elif selected_provider == LM_STUDIO_PROVIDER:
+                    print("Ensure LM Studio local server is running and at least one model is loaded.")
                 else:
                     print("Please ensure Ollama is running and a model is available.")
 
+            print("Returning to Level A menu...")
+            continue
+
+        if task_key == '5':
+            config['output_types'] = prompt_select_output_types(config.get('output_types', DEFAULT_OUTPUT_TYPES))
+            save_config({
+                'output_types': serialize_output_types(config['output_types'])
+            })
+            print(f"Saved output types: {format_output_types(config['output_types'])}")
             print("Returning to Level A menu...")
             continue
 
@@ -559,6 +726,8 @@ def run_interactive_wizard():
             print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
         elif provider == AZURE_AI_FOUNDRY_PROVIDER:
             print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+        elif provider == LM_STUDIO_PROVIDER:
+            print("Ensure LM Studio local server is running and at least one model is loaded.")
         else:
             print("Please ensure Ollama is running and a model is available.")
         return
@@ -597,7 +766,9 @@ def run_interactive_wizard():
     save_config({
         'llm_provider': config['llm_provider'],
         'llm_model': config['llm_model'],
-        'active_prompt': config['active_prompt']
+        'lm_studio_model_name': config.get('lm_studio_model_name', ''),
+        'active_prompt': config['active_prompt'],
+        'output_types': serialize_output_types(config['output_types'])
     })
 
     if run_download:
@@ -629,7 +800,8 @@ def run_interactive_wizard():
     save_config({
         'llm_provider': config['llm_provider'],
         'llm_model': config['llm_model'],
-        'active_prompt': config['active_prompt']
+        'active_prompt': config['active_prompt'],
+        'output_types': serialize_output_types(config['output_types'])
     })
 
     print("\n--- Wizard finished. ---")
@@ -658,13 +830,14 @@ def main():
 """
     )
     parser.add_argument("-track", action="store_true", help="Accepted for backward compatibility; processing now outputs both inline and track-changes DOCX files.")
-    parser.add_argument("--source-type", choices=['docx', 'mhtml', 'url'], required=True, help="The type of source to process.")
+    parser.add_argument("--source-type", choices=['docx', 'mhtml', 'pdf', 'url'], required=True, help="The type of source to process.")
     parser.add_argument("--input", required=True, help="Path to a single input file or a URL (if --source-type is url).")
     args = parser.parse_args()
 
     config = load_config()
     config['llm_provider'] = normalize_provider(config.get('llm_provider', OLLAMA_PROVIDER))
     config['active_prompt'] = normalize_prompt_key(config.get('active_prompt', DEFAULT_PROMPT_KEY))
+    config['output_types'] = normalize_output_types(config.get('output_types', DEFAULT_OUTPUT_TYPES))
     if config['llm_provider'] == AZURE_PROVIDER:
         azure_settings = get_azure_settings(config)
         if azure_settings['deployment_name']:
@@ -673,6 +846,10 @@ def main():
         foundry_settings = get_azure_ai_foundry_settings(config)
         if foundry_settings['model_name']:
             config['llm_model'] = foundry_settings['model_name']
+    elif config['llm_provider'] == LM_STUDIO_PROVIDER:
+        lm_studio_settings = get_lm_studio_settings(config)
+        if lm_studio_settings['model_name']:
+            config['llm_model'] = lm_studio_settings['model_name']
 
     workspace_dir = Path(__file__).parent
 
@@ -680,7 +857,7 @@ def main():
         provider = config.get('llm_provider', OLLAMA_PROVIDER)
         validate_provider_config(provider, config)
         client = create_client(provider, config)
-        if provider == OLLAMA_PROVIDER:
+        if provider in {OLLAMA_PROVIDER, LM_STUDIO_PROVIDER}:
             client.models.list()
     except Exception as e:
         provider = config.get('llm_provider', OLLAMA_PROVIDER)
@@ -689,6 +866,8 @@ def main():
             print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
         elif provider == AZURE_AI_FOUNDRY_PROVIDER:
             print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+        elif provider == LM_STUDIO_PROVIDER:
+            print("Ensure LM Studio local server is running and at least one model is loaded.")
         else:
             print("Please ensure Ollama is running and the model is available.")
         return
@@ -732,6 +911,9 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
     output_dir = output_dir or (workspace_dir / config['output_dir'])
     output_dir.mkdir(parents=True, exist_ok=True)
     mhtml_sources_to_cleanup = []
+    selected_output_types = normalize_output_types(config.get('output_types', DEFAULT_OUTPUT_TYPES))
+
+    print(f"Selected output types: {format_output_types(selected_output_types)}")
 
     for file_path in files_to_process:
         print(f"\n--- Processing: {file_path.name} ---")
@@ -803,34 +985,48 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
 
         output_stem = build_output_stem(file_path)
         prompt_abbr = get_prompt_abbreviation(config.get('active_prompt', DEFAULT_PROMPT_KEY), fallback="GEN")
-        inline_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_inline.docx"
-        tracked_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_track_changes.docx"
-        hybrid_output_path = output_dir / f"{output_stem}_{prompt_abbr}_corrected_hybrid.docx"
 
-        try:
-            apply_inline_correction_plan(str(processing_file_path), str(inline_output_path), correction_plan, config)
-        except Exception as e:
-            print(f"  [!] Inline DOCX output failed: {e}")
+        for output_type in selected_output_types:
+            suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
+            output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
 
-        if process_docx_tracked_with_plan is None:
-            print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
-            print("      Skipping Track Changes output.")
-        else:
-            try:
-                process_docx_tracked_with_plan(str(processing_file_path), str(tracked_output_path), correction_plan, config)
-            except Exception as e:
-                print(f"  [!] Track Changes DOCX output failed: {e}")
+            if output_type == "inline":
+                try:
+                    apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                except Exception as e:
+                    print(f"  [!] Inline DOCX output failed: {e}")
 
-        try:
-            apply_hybrid_correction_plan(str(processing_file_path), str(hybrid_output_path), correction_plan, config)
-        except Exception as e:
-            print(f"  [!] Hybrid DOCX output failed: {e}")
+            elif output_type == "uncommented":
+                uncommented_config = dict(config)
+                uncommented_config['add_comments'] = False
+                uncommented_config['show_deletion_markers'] = False
+                try:
+                    apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, uncommented_config)
+                except Exception as e:
+                    print(f"  [!] Uncommented DOCX output failed: {e}")
+
+            elif output_type == "track_changes":
+                if process_docx_tracked_with_plan is None:
+                    print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
+                    print("      Skipping Track Changes output.")
+                else:
+                    try:
+                        process_docx_tracked_with_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                    except Exception as e:
+                        print(f"  [!] Track Changes DOCX output failed: {e}")
+
+            elif output_type == "hybrid":
+                try:
+                    apply_hybrid_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                except Exception as e:
+                    print(f"  [!] Hybrid DOCX output failed: {e}")
         
         doc_end_time = time.time()
         total_doc_time = doc_end_time - doc_start_time
         
         model_used = config['llm_model']
         total_text_size = stats.get('total_text_size', 0)
+        total_input_tokens = stats.get('total_input_tokens', 0)
         total_tokens_generated = stats.get('total_tokens_generated', 0)
         total_llm_time = stats.get('total_llm_time', 0)
         tokens_per_second = (total_tokens_generated / total_llm_time) if total_llm_time > 0 else 0
@@ -841,6 +1037,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
         print(f"  Text size processed:   {total_text_size} characters")
         print(f"  Model used:            {model_used}")
         print(f"  LLM generation time:   {total_llm_time:.2f} seconds")
+        print(f"  Input tokens sent:     {total_input_tokens}")
         print(f"  Tokens generated:      {total_tokens_generated}")
         print(f"  Average tokens/sec:    {tokens_per_second:.2f}")
 
@@ -853,6 +1050,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 'total_doc_time': total_doc_time,
                 'total_text_size': total_text_size,
                 'total_llm_time': total_llm_time,
+                'total_input_tokens': total_input_tokens,
                 'total_tokens_generated': total_tokens_generated,
                 'tokens_per_second': tokens_per_second
             }

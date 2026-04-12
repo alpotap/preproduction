@@ -1,3 +1,5 @@
+"""Coordinates metadata extraction and AI consistency analysis into one workflow."""
+
 import argparse
 import json
 from pathlib import Path
