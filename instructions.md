@@ -129,7 +129,11 @@ Use one block per output type.
 ## Implementation Notes (For Assistant)
 
 When applying requests from this file, prioritize updates in:
-- `process.py` (orchestration and output generation flow)
+- `process.py` (thin CLI entry point)
+- `engine.py` (shared orchestration and processing engine for CLI/API use)
+- `wizard_ui.py` (interactive terminal prompts and CLI-only flow)
+- `providers.py` (provider normalization/settings/client creation)
+- `output_types.py` (output type registry and persistence helpers)
 - `document_processor.py` (inline/hybrid rendering)
 - `tracked_processor.py` (track changes rendering)
 - `readme.md` (user-facing behavior summary)

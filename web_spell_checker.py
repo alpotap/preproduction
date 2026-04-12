@@ -1,46 +1,13 @@
 """Processes saved web content into corrected Markdown using the same LLM pipeline."""
 
-import os
-import re
 from pathlib import Path
 from openai import OpenAI
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.edge.service import Service
-import time
 from email import message_from_string
 import argparse
 from utils import load_config
 from llm_service import get_corrections_from_llm
-
-def save_mhtml(url, output_dir):
-    try:
-        service = Service()
-        driver = webdriver.Edge(service=service)
-        driver.get(url)
-        time.sleep(25)
-        
-        # Attempt to extract H1 for filename
-        try:
-            h1_text = driver.find_element("tag name", "h1").text.strip()
-            filename = re.sub(r'[^\w\-_.]', '_', h1_text) + '.mhtml' if h1_text else re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
-        except Exception:
-            filename = re.sub(r'[^\w\-_.]', '_', url) + '.mhtml'
-
-        mhtml_path = output_dir / filename
-        if mhtml_path.exists():
-            print(f"Skipping {url}, file already exists as {filename}")
-            driver.quit()
-            return
-
-        mhtml_data = driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})['data']
-        driver.quit()
-        mhtml_path.parent.mkdir(exist_ok=True, parents=True)
-        with open(mhtml_path, "w", encoding="utf-8") as f:
-            f.write(mhtml_data)
-        print(f"MHTML saved to {mhtml_path}")
-    except Exception as e:
-        print(f"Error saving MHTML for {url}: {e}")
+from web_tools import download_url_as_mhtml
 
 def process_mhtml(mhtml_file, config, client):
     with open(mhtml_file, 'r', encoding='utf-8') as f:
@@ -49,7 +16,11 @@ def process_mhtml(mhtml_file, config, client):
     html_content = None
     for part in msg.walk():
         if part.get_content_type() == 'text/html':
-            html_content = part.get_payload(decode=True).decode('utf-8')
+            payload = part.get_payload(decode=True)
+            if isinstance(payload, bytes):
+                html_content = payload.decode('utf-8', errors='replace')
+            elif isinstance(payload, str):
+                html_content = payload
             break
     if not html_content:
         print(f"No HTML found in {mhtml_file}")
@@ -132,7 +103,7 @@ def main():
         with open(urls_file, 'r', encoding='utf-8') as f:
             urls = [line.strip() for line in f if line.strip()]
         for url in urls:
-            save_mhtml(url, output_mhtml_dir)
+            download_url_as_mhtml(url, output_mhtml_dir)
     elif args.mode == 'process':
         client = OpenAI(base_url="http://localhost:11434/v1", api_key="not-needed")
         for mhtml_file in output_mhtml_dir.glob('*.mhtml'):
@@ -148,7 +119,7 @@ def main():
         with open(urls_file, 'r', encoding='utf-8') as f:
             urls = [line.strip() for line in f if line.strip()]
         for url in urls:
-            save_mhtml(url, output_mhtml_dir)
+            download_url_as_mhtml(url, output_mhtml_dir)
         # Then process all
         client = OpenAI(base_url="http://localhost:11434/v1", api_key="not-needed")
         for mhtml_file in output_mhtml_dir.glob('*.mhtml'):

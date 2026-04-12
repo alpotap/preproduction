@@ -91,11 +91,23 @@ py .\process.py --source-type url --input "https://example.com"
   - `output/<course_folder>/<filename>_corrected_track_changes.docx` — Track Changes format
   - `output/<course_folder>/<filename>_corrected_hybrid.docx` — inline corrections plus Word comments
   - `output/performance_log.csv` — performance metrics for all runs
-- `process.py` — main entry point (interactive wizard or CLI mode)
+- `process.py` — thin CLI entry point for wizard mode and command-line mode
+- `engine.py` — shared processing engine intended for CLI, future API, and other integrations
+- `wizard_ui.py` — interactive terminal wizard separated from processing logic
+- `providers.py` — provider normalization, provider settings, and API client factory helpers
+- `output_types.py` — output type registry and selection helpers used by CLI/wizard
 - `document_processor.py` — builds correction plan and applies inline formatting
 - `tracked_processor.py` — applies corrections via Word Track Changes
 - `convert.py` — MHTML/PDF to DOCX conversion through Word automation
 - `web_tools.py` — URL download to MHTML via Selenium
+
+## Architecture
+
+- `engine.py` owns reusable processing functions and should be the integration surface for any future API layer.
+- `wizard_ui.py` owns terminal prompts and interactive flow only.
+- `process.py` is intentionally thin so the CLI can evolve independently from the core engine.
+
+This separation is designed so future web/API work can call engine functions directly without depending on `input()` prompts or other terminal-only behavior.
 
 ## Output Change Workflow
 
@@ -114,9 +126,9 @@ Input Directory: input
 Output Directory: output
 Highlight Corrections: true
 Add Comments: true
-Active Prompt: default
-LLM Provider: ollama
-LLM Model: gpt-oss:120b-cloud
+Active Prompt: grammar_only
+LLM Provider: azure_ai_foundry
+LLM Model: gpt-oss-120b
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 Azure API Version: 2025-03-01-preview
@@ -124,7 +136,7 @@ Azure Deployment Name: GPT 40 mini (low quality but very fast)
 Azure AI Foundry Model Name: gpt-oss-120b
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: inline, uncommented, track_changes, hybrid
+Output Types: hybrid
 
 ## Model providers
 
