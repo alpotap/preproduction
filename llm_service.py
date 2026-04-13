@@ -1,14 +1,43 @@
+"""Calls the configured LLM, parses JSON correction responses, and tracks token usage."""
+
 import time
 import json
 import re
+from datetime import datetime
+from pathlib import Path
 try:
     from prompts import PROMPTS, DEFAULT_PROMPT_KEY
 except ImportError:
     PROMPTS = {}
     DEFAULT_PROMPT_KEY = "default"
 
+
+RAW_OUTPUT_TRACKER_PATH = Path(__file__).parent / "output" / "llm_raw_output.log"
+RAW_OUTPUT_TRACKER_MAX_LINES = 2000
+
+
+def _append_raw_llm_output(model_name, prompt_key, content):
+    """Append raw LLM response text to a tracker file capped to the last N lines."""
+    RAW_OUTPUT_TRACKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    entry_lines = [
+        f"[{datetime.now().isoformat()}] model={model_name} prompt={prompt_key}",
+        content if content is not None else "",
+        "",
+    ]
+
+    with open(RAW_OUTPUT_TRACKER_PATH, "a", encoding="utf-8") as tracker_file:
+        tracker_file.write("\n".join(entry_lines))
+
+    with open(RAW_OUTPUT_TRACKER_PATH, "r", encoding="utf-8") as tracker_file:
+        lines = tracker_file.readlines()
+
+    if len(lines) > RAW_OUTPUT_TRACKER_MAX_LINES:
+        with open(RAW_OUTPUT_TRACKER_PATH, "w", encoding="utf-8") as tracker_file:
+            tracker_file.writelines(lines[-RAW_OUTPUT_TRACKER_MAX_LINES:])
+
 def get_corrections_from_llm(text, config, client):
-    """Sends text to the local LLM and returns a list of corrections, token count, and duration."""
+    """Sends text to the LLM and returns corrections, input/output tokens, and duration."""
     
     # Load prompt from prompts.py based on config, fallback to default if key missing
     prompt_key = config.get('active_prompt', DEFAULT_PROMPT_KEY)
@@ -29,8 +58,10 @@ def get_corrections_from_llm(text, config, client):
                 max_tokens=config['llm_max_tokens']
             )
             llm_time = time.time() - llm_start_time
+            prompt_tokens = response.usage.prompt_tokens if response.usage else 0
             completion_tokens = response.usage.completion_tokens if response.usage else 0
             content = response.choices[0].message.content.strip()
+            _append_raw_llm_output(config.get('llm_model', ''), prompt_key, content)
 
             # More robustly find JSON, even if it's embedded in conversation
             json_str_to_decode = ""
@@ -54,15 +85,15 @@ def get_corrections_from_llm(text, config, client):
             result = json.loads(json_str_to_decode)
             if not isinstance(result, list):
                 raise ValueError("LLM response is valid JSON but not a list.")
-            return result, completion_tokens, llm_time
+            return result, prompt_tokens, completion_tokens, llm_time
 
         except (ValueError, json.JSONDecodeError) as e:
             print(f"  [!] JSON parsing failed (Attempt {attempt+1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
                 print(f"  -> Raw response preview: {content[:500]}...")
-                return [], completion_tokens if 'completion_tokens' in locals() else 0, llm_time
+                return [], prompt_tokens if 'prompt_tokens' in locals() else 0, completion_tokens if 'completion_tokens' in locals() else 0, llm_time
         except Exception as e:
             llm_time = time.time() - llm_start_time
             print(f"  [!] Error calling LLM API (Attempt {attempt+1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
-                return [], 0, llm_time
+                return [], 0, 0, llm_time

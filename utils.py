@@ -1,3 +1,5 @@
+"""Loads persisted configuration from the README and writes performance statistics."""
+
 import re
 from pathlib import Path
 import csv
@@ -14,11 +16,14 @@ def load_config():
         'active_prompt': 'default',
         'llm_provider': 'ollama',
         'llm_model': 'local-model',
+        'lm_studio_base_url': 'http://127.0.0.1:1234/v1',
+        'lm_studio_model_name': '',
         'azure_api_version': '2024-10-21',
         'azure_deployment_name': '',
         'azure_ai_foundry_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
+        'output_types': 'inline, track_changes, hybrid',
         'default_output_format': 'md'
     }
     readme_path = Path(__file__).parent / 'readme.md'
@@ -82,13 +87,14 @@ def log_performance_stats(log_file_path, stats_data):
     header = [
         "timestamp", "document_name", "model_used",
         "total_processing_time_s", "text_size_chars",
-        "llm_generation_time_s", "tokens_generated", "avg_tokens_per_sec"
+        "llm_generation_time_s", "input_tokens", "tokens_generated", "avg_tokens_per_sec"
     ]
 
     row = [
         stats_data['timestamp'], stats_data['document_name'], stats_data['model_used'],
         f"{stats_data['total_doc_time']:.2f}", stats_data['total_text_size'],
-        f"{stats_data['total_llm_time']:.2f}", stats_data['total_tokens_generated'],
+        f"{stats_data['total_llm_time']:.2f}", stats_data.get('total_input_tokens', 0),
+        stats_data['total_tokens_generated'],
         f"{stats_data['tokens_per_second']:.2f}"
     ]
 

@@ -1,29 +1,17 @@
+"""Benchmark helper for running the processor against multiple local models."""
+
 import subprocess
 import sys
 from pathlib import Path
-from openai import OpenAI
 import time
+from providers import fetch_ollama_models
 
 # --- Configuration ---
 # Update this path to the file you want to test
 INPUT_FILE = "input/https___leai.learnexperts.ca_share_8f4d898a-89b1-4def-85b6-61962db1e8f7.mhtml"
-OUTPUT_FORMAT = "docx" # or "docx"
 # ---------------------
 
-def get_ollama_models():
-    """Fetches the list of available models from Ollama."""
-    try:
-        client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-        models_response = client.models.list()
-        if not models_response.data:
-            print("No models found in Ollama.")
-            return []
-        return [m.id for m in models_response.data]
-    except Exception as e:
-        print(f"Error fetching models from Ollama: {e}")
-        return []
-
-def run_process_with_model(model_name, input_file, output_format):
+def run_process_with_model(model_name, input_file):
     """Runs process.py with a specific model and input file."""
     print(f"\n--- Benchmarking Model: {model_name} ---")
     
@@ -38,10 +26,8 @@ def run_process_with_model(model_name, input_file, output_format):
     
     update_config_model(model_name)
     
-    # Construct the command
-    # We use source-type docx or mhtml based on extension
     input_path = Path(input_file)
-    source_type = 'docx' if input_path.suffix == '.docx' else 'mhtml'
+    source_type = "docx" if input_path.suffix.lower() == ".docx" else "mhtml"
     
     cmd = [
         sys.executable, "process.py",
@@ -51,28 +37,7 @@ def run_process_with_model(model_name, input_file, output_format):
     
     try:
         subprocess.run(cmd, check=True)
-        
-        # Rename the output file to include the model name
-        # process.py saves to output/{stem}_corrected.{format}
-        workspace_dir = Path(__file__).parent
-        output_dir = workspace_dir / "output"
-        default_output_name = f"{input_path.stem}_corrected.{output_format}"
-        default_output_path = output_dir / default_output_name
-        
-        if default_output_path.exists():
-            # Sanitize model name for filename
-            safe_model_name = model_name.replace(":", "-").replace("/", "-")
-            new_output_name = f"{input_path.stem}_{safe_model_name}.{output_format}"
-            new_output_path = output_dir / new_output_name
-            
-            # Remove if exists from previous run
-            if new_output_path.exists():
-                new_output_path.unlink()
-                
-            default_output_path.rename(new_output_path)
-            print(f"  > Saved output to: {new_output_name}")
-        else:
-            print(f"  > Warning: Expected output file not found: {default_output_name}")
+        print("  > Completed run.")
             
     except subprocess.CalledProcessError as e:
         print(f"  > Error running process.py for model {model_name}: {e}")
@@ -113,7 +78,7 @@ def main():
         return
 
     # Get models
-    models = get_ollama_models()
+    models = fetch_ollama_models()
     if not models:
         print("No models to test.")
         return
@@ -123,7 +88,7 @@ def main():
     
     # Loop through all models
     for model in models:
-        run_process_with_model(model, input_path, OUTPUT_FORMAT)
+        run_process_with_model(model, input_path)
         time.sleep(1) # Small pause
 
     print("\n--- Benchmarking Complete ---")

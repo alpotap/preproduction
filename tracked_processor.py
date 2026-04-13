@@ -1,3 +1,5 @@
+"""Applies shared correction plans to DOCX files using Microsoft Word Track Changes."""
+
 import difflib
 import win32com.client as win32
 
@@ -12,7 +14,8 @@ def _clean_paragraph_text(text):
     """Normalize Word paragraph text for LLM processing and matching."""
     if not text:
         return ""
-    return text.replace("\r", "").replace("\x07", "").strip()
+    # \x01 appears in Word COM text for inline shapes; \r/\x07 are paragraph/cell end markers.
+    return text.replace("\r", "").replace("\x07", "").replace("\x01", "").strip()
 
 
 def _trim_paragraph_end_markers(text):
@@ -24,14 +27,92 @@ def _trim_paragraph_end_markers(text):
     return text
 
 
+def _clean_to_raw_index(raw_text, clean_index):
+    """Map an index from clean_text (without \x01) back to raw Word text offset."""
+    if clean_index <= 0:
+        return 0
+    raw_idx = 0
+    clean_count = 0
+    while clean_count < clean_index and raw_idx < len(raw_text):
+        if raw_text[raw_idx] != "\x01":
+            clean_count += 1
+        raw_idx += 1
+    return raw_idx
+
+
+def _find_all_indices(text, needle):
+    """Return start indices of all non-overlapping needle matches in text."""
+    indices = []
+    if not needle:
+        return indices
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx == -1:
+            break
+        indices.append(idx)
+        start = idx + max(1, len(needle))
+    return indices
+
+
+def _locate_target_range(word_doc, paragraph, original, preferred_start_clean=None):
+    """Locate a Word range for original text using optional clean-text offset guidance."""
+    raw_para_text = _trim_paragraph_end_markers(paragraph.Range.Text)
+    clean_text = raw_para_text.replace("\x01", "")
+
+    if preferred_start_clean is not None and preferred_start_clean >= 0:
+        candidate_indices = _find_all_indices(clean_text, original)
+        if candidate_indices:
+            if preferred_start_clean in candidate_indices:
+                chosen_start = preferred_start_clean
+            else:
+                later = [i for i in candidate_indices if i >= preferred_start_clean]
+                chosen_start = later[0] if later else candidate_indices[-1]
+
+            raw_start = _clean_to_raw_index(raw_para_text, chosen_start)
+            base_start = paragraph.Range.Start
+            return word_doc.Range(
+                Start=base_start + raw_start,
+                End=base_start + raw_start + len(original),
+            )
+
+    start_idx_clean = clean_text.find(original)
+    if start_idx_clean == -1:
+        return None
+
+    raw_start = _clean_to_raw_index(raw_para_text, start_idx_clean)
+    base_start = paragraph.Range.Start
+    return word_doc.Range(
+        Start=base_start + raw_start,
+        End=base_start + raw_start + len(original),
+    )
+
+
+# wdWithInTable COM constant — True when a range sits inside a table cell.
+_WD_WITH_IN_TABLE = 13
+
+
 def _collect_all_paragraphs_from_docx(doc):
-    """Collect paragraphs from the document body and table cells for Word COM objects."""
-    all_paragraphs = list(doc.Paragraphs)
-    for table in doc.Tables:
-        for row in table.Rows:
-            for cell in row.Cells:
-                all_paragraphs.extend(cell.Range.Paragraphs)
-    return all_paragraphs
+    """Collect paragraphs in body-first order matching python-docx's _collect_all_paragraphs.
+
+    Word COM's doc.Paragraphs returns every paragraph in document-flow order
+    (body and table cells interleaved), which differs from python-docx where
+    doc.paragraphs yields only top-level body paragraphs.  The correction plan
+    is built with python-docx (body first, table cells appended), so we must
+    reproduce that ordering here to keep the paragraph cursor in sync.
+    """
+    body_paragraphs = []
+    table_paragraphs = []
+    for para in doc.Paragraphs:
+        try:
+            in_table = para.Range.Information(_WD_WITH_IN_TABLE)
+        except Exception:
+            in_table = False
+        if in_table:
+            table_paragraphs.append(para)
+        else:
+            body_paragraphs.append(para)
+    return body_paragraphs + table_paragraphs
 
 
 def _apply_diff_to_range(word_doc, target_range, original, corrected):
@@ -56,7 +137,7 @@ def _apply_diff_to_range(word_doc, target_range, original, corrected):
         edit_range.Text = replacement_text
 
 
-def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, explanation, add_comments):
+def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, explanation, add_comments, preferred_start_clean=None):
     """Apply one correction to a Word paragraph with Track Changes enabled."""
     if not original:
         return False
@@ -67,7 +148,10 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
 
     target = None
 
-    if len(original) <= MAX_FIND_TEXT_LENGTH:
+    # Prefer position-aware anchoring from the original paragraph content.
+    target = _locate_target_range(word_doc, paragraph, original, preferred_start_clean)
+
+    if target is None and len(original) <= MAX_FIND_TEXT_LENGTH:
         try:
             find = para_range.Find
             find.ClearFormatting()
@@ -80,12 +164,7 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
             target = None
 
     if target is None:
-        raw_para_text = _trim_paragraph_end_markers(paragraph.Range.Text)
-        start_idx = raw_para_text.find(original)
-        if start_idx == -1:
-            return False
-        base_start = paragraph.Range.Start
-        target = word_doc.Range(Start=base_start + start_idx, End=base_start + start_idx + len(original))
+        return False
 
     if add_comments and explanation:
         try:
@@ -125,8 +204,11 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
                 continue
 
             matched_paragraph = None
+            # item["content"] is python-docx para.text (unstripped); paragraphs[]
+            # content is already stripped by _clean_paragraph_text — normalise before comparing.
+            item_content_clean = item["content"].strip()
             for idx in range(paragraph_cursor, len(paragraphs)):
-                if paragraphs[idx]["content"] == item["content"]:
+                if paragraphs[idx]["content"] == item_content_clean:
                     matched_paragraph = paragraphs[idx]["para"]
                     paragraph_cursor = idx + 1
                     break
@@ -135,15 +217,24 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
                 continue
 
             block_corrections.sort(key=lambda x: item["content"].find(x["original"]))
+            last_search_start = 0
             for corr in block_corrections:
+                original = corr["original"]
+                expected_start = item["content"].find(original, last_search_start)
+                if expected_start == -1:
+                    expected_start = item["content"].find(original)
+                if expected_start != -1:
+                    last_search_start = expected_start + len(original)
+
                 explanation = (corr.get("explanation") or "").strip()
                 _apply_correction_to_paragraph(
                     word_doc=doc,
                     paragraph=matched_paragraph,
-                    original=corr["original"],
-                    corrected=corr.get("corrected", corr["original"]),
+                    original=original,
+                    corrected=corr.get("corrected", original),
                     explanation=explanation,
                     add_comments=config.get("add_comments", True),
+                    preferred_start_clean=expected_start,
                 )
 
         doc.SaveAs(output_path, FileFormat=12)
