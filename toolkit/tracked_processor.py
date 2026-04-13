@@ -3,7 +3,7 @@
 import difflib
 import win32com.client as win32
 
-from document_processor import build_correction_plan
+from toolkit.document_processor import build_correction_plan
 
 
 WD_FIND_STOP = 0

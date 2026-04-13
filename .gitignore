@@ -2,3 +2,6 @@
 __pycache__/
 input/
 output/
+.env
+.env.*
+!.env.example

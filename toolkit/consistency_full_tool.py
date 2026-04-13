@@ -4,9 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from consistency_analysis_tool import run_consistency_analysis, write_analysis_docx
-from consistency_metadata_tool import scan_input_folder, write_metadata_outputs
-from utils import load_config
+from toolkit.consistency_analysis_tool import run_consistency_analysis, write_analysis_docx
+from toolkit.consistency_metadata_tool import scan_input_folder, write_metadata_outputs
+from toolkit.utils import load_config
 
 
 def parse_args() -> argparse.Namespace:

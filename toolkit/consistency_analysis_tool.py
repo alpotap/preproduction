@@ -10,7 +10,7 @@ from pathlib import Path
 from docx import Document
 from openai import AzureOpenAI, OpenAI
 
-from utils import load_config
+from toolkit.utils import load_config
 
 OLLAMA_PROVIDER = "ollama"
 AZURE_PROVIDER = "azure_openai"

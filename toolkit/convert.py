@@ -2,10 +2,12 @@
 
 import os
 import sys
+import pythoncom
 import win32com.client as win32
 
 
 def pdf_to_docx(input_path, output_path=None, visible=False):
+    pythoncom.CoInitialize()
     input_path = os.path.abspath(input_path)
     if output_path is None:
         base, _ = os.path.splitext(input_path)
@@ -33,9 +35,11 @@ def pdf_to_docx(input_path, output_path=None, visible=False):
             word.Quit()
         except Exception:
             pass
+        pythoncom.CoUninitialize()
 
 
 def mhtml_to_docx(input_path, output_path=None, visible=False):
+    pythoncom.CoInitialize()
     input_path = os.path.abspath(input_path)
     if output_path is None:
         base, _ = os.path.splitext(input_path)
@@ -63,6 +67,7 @@ def mhtml_to_docx(input_path, output_path=None, visible=False):
             word.Quit()
         except Exception:
             pass
+        pythoncom.CoUninitialize()
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

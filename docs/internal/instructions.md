@@ -132,10 +132,18 @@ When applying requests from this file, prioritize updates in:
 - `process.py` (thin CLI entry point)
 - `engine.py` (shared orchestration and processing engine for CLI/API use)
 - `wizard_ui.py` (interactive terminal prompts and CLI-only flow)
+- `local_web.py` (localhost web API and single-page app host)
+- `web_jobs.py` (background queue and web execution status/log handling)
+- `docs/api_contract.md` (stable endpoint contract for web integrations)
 - `providers.py` (provider normalization/settings/client creation)
 - `output_types.py` (output type registry and persistence helpers)
 - `document_processor.py` (inline/hybrid rendering)
 - `tracked_processor.py` (track changes rendering)
 - `readme.md` (user-facing behavior summary)
+
+Web queue behavior policy:
+- Job history should persist in `output/web_job_history.json` for restart continuity.
+- Queue/UI should support cancel and retry actions.
+- Running cancellation is best-effort and should be cooperative at safe checkpoints.
 
 If a request is ambiguous, implement the safest minimal version and document assumptions in the commit summary.
