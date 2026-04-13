@@ -4,11 +4,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from utils import log_performance_stats
-from document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan
-from web_tools import download_url_as_mhtml
-from output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, format_output_types
-from providers import (
+from toolkit.utils import log_performance_stats
+from toolkit.document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan
+from toolkit.web_tools import download_url_as_mhtml
+from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, format_output_types
+from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
     AZURE_PROVIDER,
@@ -22,7 +22,7 @@ from providers import (
 )
 
 try:
-    from prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation
+    from toolkit.prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation
 except (ImportError, ModuleNotFoundError):
     DEFAULT_PROMPT_KEY = "default"
     PROMPT_DEFINITIONS = {
@@ -36,18 +36,18 @@ except (ImportError, ModuleNotFoundError):
         return fallback
 
 try:
-    from tracked_processor import process_docx_tracked_with_plan
+    from toolkit.tracked_processor import process_docx_tracked_with_plan
 except (ImportError, ModuleNotFoundError):
     process_docx_tracked_with_plan = None
 
 try:
-    from convert import mhtml_to_docx, pdf_to_docx
+    from toolkit.convert import mhtml_to_docx, pdf_to_docx
 except (ImportError, ModuleNotFoundError):
     mhtml_to_docx = None
     pdf_to_docx = None
 
 try:
-    from consistency_full_tool import run_full_consistency
+    from toolkit.consistency_full_tool import run_full_consistency
 except (ImportError, ModuleNotFoundError):
     run_full_consistency = None
 
@@ -166,8 +166,21 @@ def run_consistency_for_course(source_dir, output_dir, selected_course, config, 
     }
 
 
-def process_files(files_to_process, config, client, workspace_dir, source_type_override=None, output_dir=None, cleanup_source_mhtml=False):
+def process_files(
+    files_to_process,
+    config,
+    client,
+    workspace_dir,
+    source_type_override=None,
+    output_dir=None,
+    cleanup_source_mhtml=False,
+    should_cancel=None,
+):
     """Process a list of source files using the shared correction-plan pipeline."""
+    def _raise_if_canceled():
+        if callable(should_cancel) and should_cancel():
+            raise RuntimeError("Canceled by user request")
+
     output_dir = output_dir or (workspace_dir / config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     mhtml_sources_to_cleanup = []
@@ -176,6 +189,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
     print(f"Selected output types: {format_output_types(selected_output_types)}")
 
     for file_path in files_to_process:
+        _raise_if_canceled()
         print(f"\n--- Processing: {file_path.name} ---")
         doc_start_time = time.time()
 
@@ -234,8 +248,15 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
                 continue
 
         try:
-            correction_plan, stats = build_correction_plan(str(processing_file_path), config, client)
+            correction_plan, stats = build_correction_plan(
+                str(processing_file_path),
+                config,
+                client,
+                should_cancel=_raise_if_canceled,
+            )
         except Exception as e:
+            if str(e) == "Canceled by user request":
+                raise
             print(f"  [!] Could not build correction plan: {e}")
             print(f"      Skipping file: {file_path.name}")
             continue
@@ -244,6 +265,7 @@ def process_files(files_to_process, config, client, workspace_dir, source_type_o
         prompt_abbr = get_prompt_abbreviation(config.get("active_prompt", DEFAULT_PROMPT_KEY), fallback="GEN")
 
         for output_type in selected_output_types:
+            _raise_if_canceled()
             suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
             output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
 

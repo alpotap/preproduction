@@ -1,0 +1,594 @@
+const state = {
+  capabilities: null,
+  currentLogKind: 'execution',
+  currentScope: 'input',
+  promptMap: {},
+  promptAbbrMap: {},
+  selectableFiles: [],
+};
+
+const elements = {
+  heroStatus: document.getElementById('heroStatus'),
+  tabline: document.getElementById('tabline'),
+  tabButtons: document.querySelectorAll('.tab-button'),
+  tabPanels: document.querySelectorAll('.tab-panel'),
+  taskType: document.getElementById('taskType'),
+  folderSelect: document.getElementById('folderSelect'),
+  newFolderName: document.getElementById('newFolderName'),
+  createFolderButton: document.getElementById('createFolderButton'),
+  fileSelectBlock: document.getElementById('fileSelectBlock'),
+  selectableFilesList: document.getElementById('selectableFilesList'),
+  selectableFilesNote: document.getElementById('selectableFilesNote'),
+  selectAllFilesButton: document.getElementById('selectAllFilesButton'),
+  clearFilesButton: document.getElementById('clearFilesButton'),
+  dropZone: document.getElementById('dropZone'),
+  fileInput: document.getElementById('fileInput'),
+  chooseFilesButton: document.getElementById('chooseFilesButton'),
+  uploadSummary: document.getElementById('uploadSummary'),
+  urlsInput: document.getElementById('urlsInput'),
+  promptSelect: document.getElementById('promptSelect'),
+  providerSelect: document.getElementById('providerSelect'),
+  modelSelect: document.getElementById('modelSelect'),
+  outputTypeList: document.getElementById('outputTypeList'),
+  promptTooltipText: document.getElementById('promptTooltipText'),
+  enqueueJobButton: document.getElementById('enqueueJobButton'),
+  jobMessage: document.getElementById('jobMessage'),
+  currentRunCard: document.getElementById('currentRunCard'),
+  jobsList: document.getElementById('jobsList'),
+  logKindSelect: document.getElementById('logKindSelect'),
+  logViewer: document.getElementById('logViewer'),
+  browserScopeSelect: document.getElementById('browserScopeSelect'),
+  browserFolderSelect: document.getElementById('browserFolderSelect'),
+  fileTable: document.getElementById('fileTable'),
+  refreshStatusButton: document.getElementById('refreshStatusButton'),
+  refreshJobsButton: document.getElementById('refreshJobsButton'),
+  refreshLogsButton: document.getElementById('refreshLogsButton'),
+  refreshFilesButton: document.getElementById('refreshFilesButton'),
+  downloadAllButton: document.getElementById('downloadAllButton'),
+};
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+function humanSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatTimestamp(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return date.toLocaleString();
+}
+
+function formatDuration(startValue, endValue) {
+  if (!startValue || !endValue) return '';
+  const start = new Date(startValue);
+  const end = new Date(endValue);
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  if (minutes > 0) return `${minutes}m ${remaining}s`;
+  return `${remaining}s`;
+}
+
+function fileIconClass(extension) {
+  const ext = (extension || '').replace('.', '').toLowerCase();
+  if (['docx'].includes(ext)) return 'docx';
+  if (['pdf'].includes(ext)) return 'pdf';
+  if (['mhtml', 'html'].includes(ext)) return 'mhtml';
+  if (['txt', 'csv', 'log', 'md'].includes(ext)) return ext;
+  if (ext === 'zip') return 'other';
+  return 'default';
+}
+
+function getOutputTagInfo(fileName) {
+  const normalized = (fileName || '').toLowerCase();
+  if (normalized.includes('corrected_inline')) return { code: 'INL', tip: 'Inline output with comments and deletion markers.' };
+  if (normalized.includes('corrected_uncommented')) return { code: 'UNC', tip: 'Inline output without comments and without deletion markers.' };
+  if (normalized.includes('corrected_track_changes')) return { code: 'TRK', tip: 'Microsoft Word Track Changes output with reviewable revisions.' };
+  if (normalized.includes('corrected_hybrid')) return { code: 'HYB', tip: 'Hybrid output: inline corrections with Word comments.' };
+  if (normalized.includes('consistency_analysis')) return { code: 'CNS', tip: 'Consistency analysis report output.' };
+  return null;
+}
+
+function getPromptTagInfo(fileName) {
+  const match = /_([A-Za-z]{2,8})_corrected_/i.exec(fileName || '');
+  if (!match) return null;
+  const code = (match[1] || '').toUpperCase();
+  if (!code) return null;
+  const prompt = state.promptAbbrMap[code];
+  if (!prompt) return null;
+  return {
+    code: prompt.abbr || code,
+    tip: `${prompt.name}: ${prompt.summary}`,
+  };
+}
+
+function escapeHtmlAttribute(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function setMessage(target, message, isError = false) {
+  target.textContent = message || '';
+  target.style.color = isError ? '#b52121' : '';
+}
+
+function updateWindowLayoutClass() {
+  const threshold = (window.screen?.availWidth || window.innerWidth) * 0.5;
+  document.body.classList.toggle('wide-window', window.innerWidth >= threshold);
+}
+
+async function loadCapabilities() {
+  state.capabilities = await fetchJson('/api/capabilities');
+  renderCapabilities();
+}
+
+function renderCapabilities() {
+  const { prompts, providers, outputTypes, config } = state.capabilities;
+  state.promptMap = Object.fromEntries(prompts.map(prompt => [prompt.key, prompt]));
+  state.promptAbbrMap = Object.fromEntries(
+    prompts
+      .filter(prompt => prompt.abbr)
+      .map(prompt => [String(prompt.abbr).toUpperCase(), prompt]),
+  );
+
+  elements.promptSelect.innerHTML = prompts
+    .map(prompt => `<option value="${prompt.key}">${prompt.name}</option>`)
+    .join('');
+  elements.promptSelect.value = config.activePrompt;
+  updatePromptTooltip();
+
+  elements.providerSelect.innerHTML = providers
+    .map(provider => `<option value="${provider.key}">${provider.label}</option>`)
+    .join('');
+  elements.providerSelect.value = config.llmProvider;
+
+  elements.outputTypeList.innerHTML = outputTypes
+    .map(outputType => {
+      const checked = (config.outputTypes || []).includes(outputType.key) ? 'checked' : '';
+      return `
+        <label class="checkbox-item">
+          <input type="checkbox" value="${outputType.key}" ${checked}>
+          <span>${outputType.label}</span>
+        </label>
+      `;
+    })
+    .join('');
+}
+
+function updatePromptTooltip() {
+  const prompt = state.promptMap[elements.promptSelect.value];
+  elements.promptTooltipText.textContent = prompt?.details || prompt?.summary || 'Prompt details unavailable.';
+}
+
+async function loadModels(preferredModel = null) {
+  const provider = elements.providerSelect.value;
+  const fallbackModel = preferredModel
+    || elements.modelSelect.value
+    || state.capabilities?.config?.llmModel
+    || '';
+  const data = await fetchJson(`/api/models?provider=${encodeURIComponent(provider)}`);
+  const models = data.models || [];
+  elements.modelSelect.innerHTML = models.length
+    ? models.map(model => `<option value="${model}">${model}</option>`).join('')
+    : '<option value="">Use current default</option>';
+
+  if (fallbackModel && models.includes(fallbackModel)) {
+    elements.modelSelect.value = fallbackModel;
+  }
+}
+
+async function loadFolders(scope = 'input', selectEl = elements.folderSelect) {
+  const data = await fetchJson(`/api/folders?scope=${encodeURIComponent(scope)}`);
+  const folders = data.folders || [];
+  selectEl.innerHTML = folders.length
+    ? folders.map(folder => `<option value="${folder}">${folder}</option>`).join('')
+    : '<option value="">No folders yet</option>';
+}
+
+async function createFolder() {
+  const name = elements.newFolderName.value.trim();
+  if (!name) {
+    setMessage(elements.jobMessage, 'Folder name is required.', true);
+    return;
+  }
+  try {
+    await fetchJson('/api/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    elements.newFolderName.value = '';
+    await loadFolders('input', elements.folderSelect);
+    elements.folderSelect.value = name;
+    await refreshSelectableFiles();
+    await loadFolders(elements.browserScopeSelect.value, elements.browserFolderSelect);
+    setMessage(elements.jobMessage, `Created folder ${name}.`);
+  } catch (error) {
+    setMessage(elements.jobMessage, error.message, true);
+  }
+}
+
+async function uploadFiles(fileList) {
+  const folder = elements.folderSelect.value;
+  if (!folder) {
+    setMessage(elements.uploadSummary, 'Choose or create an input folder first.', true);
+    return;
+  }
+  if (!fileList.length) {
+    return;
+  }
+
+  const formData = new FormData();
+  for (const file of fileList) {
+    formData.append('files', file);
+  }
+
+  try {
+    const result = await fetchJson(`/api/uploads?folder=${encodeURIComponent(folder)}`, {
+      method: 'POST',
+      body: formData,
+    });
+    const saved = result.saved?.length || 0;
+    const rejected = result.rejected?.length || 0;
+    const extracted = result.extractionStarted?.length || 0;
+    const extractionNote = extracted ? ` ZIP extraction started for ${extracted} file(s).` : '';
+    setMessage(elements.uploadSummary, `Uploaded ${saved} file(s). Rejected ${rejected}.${extractionNote}`);
+    await refreshSelectableFiles();
+    await refreshFileBrowser();
+  } catch (error) {
+    setMessage(elements.uploadSummary, error.message, true);
+  }
+}
+
+function selectedOutputTypes() {
+  return Array.from(elements.outputTypeList.querySelectorAll('input:checked')).map(input => input.value);
+}
+
+function selectedInputFiles() {
+  return Array.from(elements.selectableFilesList.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+}
+
+function updateSelectableFilesVisibility() {
+  const isProcessTask = elements.taskType.value === 'process';
+  elements.fileSelectBlock.hidden = !isProcessTask;
+}
+
+async function refreshSelectableFiles() {
+  const folder = elements.folderSelect.value;
+  if (!folder) {
+    state.selectableFiles = [];
+    elements.selectableFilesList.innerHTML = '';
+    setMessage(elements.selectableFilesNote, 'Select an input folder to choose files.');
+    return;
+  }
+
+  try {
+    const data = await fetchJson(`/api/processable-files?folder=${encodeURIComponent(folder)}`);
+    state.selectableFiles = data.files || [];
+
+    if (!state.selectableFiles.length) {
+      elements.selectableFilesList.innerHTML = '';
+      setMessage(elements.selectableFilesNote, 'No processable files (.docx, .mhtml, .pdf) found in this folder.');
+      return;
+    }
+
+    elements.selectableFilesList.innerHTML = state.selectableFiles
+      .map(name => `
+        <label class="checkbox-item selectable-file-item" title="${escapeHtmlAttribute(name)}">
+          <input type="checkbox" value="${escapeHtmlAttribute(name)}" checked>
+          <span>${name}</span>
+        </label>
+      `)
+      .join('');
+    setMessage(elements.selectableFilesNote, `${state.selectableFiles.length} file(s) available.`);
+  } catch (error) {
+    state.selectableFiles = [];
+    elements.selectableFilesList.innerHTML = '';
+    setMessage(elements.selectableFilesNote, error.message, true);
+  }
+}
+
+function selectAllInputFiles(checked) {
+  elements.selectableFilesList.querySelectorAll('input[type="checkbox"]').forEach(input => {
+    input.checked = checked;
+  });
+}
+
+async function enqueueJob() {
+  const payload = {
+    taskType: elements.taskType.value,
+    folder: elements.folderSelect.value,
+    promptKey: elements.promptSelect.value,
+    outputTypes: selectedOutputTypes(),
+    provider: elements.providerSelect.value,
+    model: elements.modelSelect.value || null,
+    urls: elements.urlsInput.value,
+    selectedFiles: selectedInputFiles(),
+  };
+
+  if (!payload.folder) {
+    setMessage(elements.jobMessage, 'Select an input folder.', true);
+    return;
+  }
+  if (payload.taskType === 'download_process' && !payload.urls.trim()) {
+    setMessage(elements.jobMessage, 'Add at least one URL for download-and-process jobs.', true);
+    return;
+  }
+  if (payload.taskType === 'process' && !payload.selectedFiles.length) {
+    setMessage(elements.jobMessage, 'Select at least one file to process.', true);
+    return;
+  }
+  if (payload.taskType !== 'process') {
+    payload.selectedFiles = [];
+  }
+
+  try {
+    await fetchJson('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setMessage(elements.jobMessage, 'Job added to queue.');
+    elements.urlsInput.value = '';
+    await Promise.all([refreshStatus(), refreshJobs()]);
+  } catch (error) {
+    setMessage(elements.jobMessage, error.message, true);
+  }
+}
+
+async function refreshStatus() {
+  const status = await fetchJson('/api/status');
+  const currentRun = status.currentRun;
+  elements.heroStatus.textContent = currentRun ? currentRun.status.toUpperCase() : 'IDLE';
+  elements.currentRunCard.classList.toggle('empty', !currentRun);
+  if (!currentRun) {
+    elements.currentRunCard.textContent = 'No active job.';
+    return;
+  }
+  elements.currentRunCard.innerHTML = `
+    <div class="job-top">
+      <strong>${currentRun.taskType}</strong>
+      <span class="badge ${currentRun.status}">${currentRun.status}</span>
+    </div>
+    <div class="run-meta">Folder: ${currentRun.folder}</div>
+    <div class="run-meta">Started: ${formatTimestamp(currentRun.startedAt)}</div>
+    <div class="run-meta">${currentRun.currentMessage || 'Running'}</div>
+  `;
+}
+
+async function refreshJobs() {
+  const data = await fetchJson('/api/jobs');
+  const jobs = (data.jobs || []).slice(0, 20);
+  if (!jobs.length) {
+    elements.jobsList.className = 'jobs-list empty';
+    elements.jobsList.textContent = 'No jobs queued yet.';
+    return;
+  }
+  elements.jobsList.className = 'jobs-list';
+  elements.jobsList.innerHTML = jobs.map(job => {
+    const cancelBtn = (job.status === 'queued' || job.status === 'running')
+      ? `<button class="button ghost" data-action="cancel" data-id="${job.id}">Cancel</button>` : '';
+    const retryBtn = (job.status === 'failed' || job.status === 'canceled' || job.status === 'completed')
+      ? `<button class="button ghost" data-action="retry" data-id="${job.id}">Retry</button>` : '';
+
+    const detailTokens = [];
+    if (job.processedFiles) detailTokens.push(`${job.processedFiles} files`);
+    if (job.downloadedUrls) detailTokens.push(`${job.downloadedUrls} urls`);
+    if (job.outputCount) detailTokens.push(`${job.outputCount} outputs`);
+    const duration = formatDuration(job.startedAt, job.finishedAt);
+    if (duration) detailTokens.push(`time ${duration}`);
+
+    return `
+      <div class="job-row">
+        <span class="badge ${job.status}">${job.status}</span>
+        <div class="job-row-info">
+          <span class="job-row-name">${job.taskType} — ${job.folder}</span>
+          <span class="job-row-msg">${job.currentMessage || ''}</span>
+          ${detailTokens.length ? `<span class="job-row-stats">${detailTokens.join(' · ')}</span>` : ''}
+        </div>
+        <span class="job-row-time">${formatTimestamp(job.createdAt)}</span>
+        <div class="job-actions">${cancelBtn}${retryBtn}</div>
+      </div>
+    `;
+  }).join('');
+
+  elements.jobsList.querySelectorAll('button[data-action="cancel"]').forEach(button => {
+    button.addEventListener('click', () => cancelJob(button.dataset.id));
+  });
+  elements.jobsList.querySelectorAll('button[data-action="retry"]').forEach(button => {
+    button.addEventListener('click', () => retryJob(button.dataset.id));
+  });
+}
+
+async function cancelJob(jobId) {
+  try {
+    await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    setMessage(elements.jobMessage, 'Cancellation submitted.');
+    await Promise.all([refreshStatus(), refreshJobs()]);
+  } catch (error) {
+    setMessage(elements.jobMessage, error.message, true);
+  }
+}
+
+async function retryJob(jobId) {
+  try {
+    await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST' });
+    setMessage(elements.jobMessage, 'Retry job queued.');
+    await Promise.all([refreshStatus(), refreshJobs()]);
+  } catch (error) {
+    setMessage(elements.jobMessage, error.message, true);
+  }
+}
+
+async function refreshLogs() {
+  const kind = elements.logKindSelect.value;
+  state.currentLogKind = kind;
+  const data = await fetchJson(`/api/logs/${encodeURIComponent(kind)}?lines=300`);
+  elements.logViewer.textContent = data.content || 'No log content yet.';
+  elements.logViewer.scrollTop = elements.logViewer.scrollHeight;
+}
+
+async function refreshFileBrowser() {
+  const scope = elements.browserScopeSelect.value;
+  const previousFolder = elements.browserFolderSelect.value;
+  await loadFolders(scope, elements.browserFolderSelect);
+
+  const folderOptions = Array.from(elements.browserFolderSelect.options).map(option => option.value).filter(Boolean);
+  if (previousFolder && folderOptions.includes(previousFolder)) {
+    elements.browserFolderSelect.value = previousFolder;
+  } else if (folderOptions.length) {
+    elements.browserFolderSelect.value = folderOptions[0];
+  }
+
+  const selectedFolder = elements.browserFolderSelect.value;
+  if (!selectedFolder) {
+    elements.fileTable.className = 'file-table empty';
+    elements.fileTable.textContent = 'Select a folder to view files.';
+    return;
+  }
+
+  const url = `/api/files?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(selectedFolder)}`;
+  const data = await fetchJson(url);
+  const files = data.files || [];
+  if (!files.length) {
+    elements.fileTable.className = 'file-table empty';
+    elements.fileTable.textContent = 'No files in this folder.';
+    return;
+  }
+  elements.fileTable.className = 'file-table';
+  elements.fileTable.innerHTML = `
+    <div class="file-header">
+      <span>Name</span>
+      <span>Size</span>
+      <span>Modified</span>
+      <span>Download</span>
+    </div>
+    ${files.map(file => `
+      ${(() => {
+        const outputInfo = getOutputTagInfo(file.name);
+        const promptInfo = getPromptTagInfo(file.name);
+        const outputTag = outputInfo
+          ? `<span class="output-pill" title="${escapeHtmlAttribute(outputInfo.tip)}">${outputInfo.code}</span>`
+          : '';
+        const promptTag = promptInfo
+          ? `<span class="output-pill prompt-pill" title="${escapeHtmlAttribute(promptInfo.tip)}">${promptInfo.code}</span>`
+          : '';
+        return `
+      <div class="file-row">
+        <div class="file-name">
+          <span class="file-icon ${fileIconClass(file.extension)}"></span>
+          <a href="${file.downloadUrl}" target="_blank" rel="noopener">${file.name}</a>
+          ${outputTag}
+          ${promptTag}
+        </div>
+        <div class="file-meta">${humanSize(file.sizeBytes)}</div>
+        <div class="file-meta">${formatTimestamp(file.modifiedAt)}</div>
+        <div><a class="button ghost" href="${file.downloadUrl}">Download</a></div>
+      </div>
+    `;
+      })()}
+    `).join('')}
+  `;
+}
+
+function switchTab(tabId) {
+  elements.tabButtons.forEach(button => {
+    button.classList.toggle('active', button.dataset.tab === tabId);
+  });
+  elements.tabPanels.forEach(panel => {
+    panel.classList.toggle('active', panel.id === tabId);
+  });
+}
+
+function downloadCurrentFolderZip() {
+  const scope = elements.browserScopeSelect.value;
+  const folder = elements.browserFolderSelect.value;
+  if (!folder) {
+    setMessage(elements.jobMessage, 'Select a folder in Files tab first.', true);
+    return;
+  }
+  const url = `/api/download-zip?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(folder)}`;
+  window.open(url, '_blank', 'noopener');
+}
+
+function bindEvents() {
+  window.addEventListener('resize', updateWindowLayoutClass);
+  elements.tabButtons.forEach(button => {
+    button.addEventListener('click', () => switchTab(button.dataset.tab));
+  });
+
+  elements.createFolderButton.addEventListener('click', createFolder);
+  elements.folderSelect.addEventListener('change', refreshSelectableFiles);
+  elements.taskType.addEventListener('change', updateSelectableFilesVisibility);
+  elements.selectAllFilesButton.addEventListener('click', () => selectAllInputFiles(true));
+  elements.clearFilesButton.addEventListener('click', () => selectAllInputFiles(false));
+  elements.chooseFilesButton.addEventListener('click', () => elements.fileInput.click());
+  elements.fileInput.addEventListener('change', event => uploadFiles(event.target.files));
+  elements.enqueueJobButton.addEventListener('click', enqueueJob);
+  elements.providerSelect.addEventListener('change', loadModels);
+  elements.promptSelect.addEventListener('change', updatePromptTooltip);
+  elements.logKindSelect.addEventListener('change', refreshLogs);
+  elements.browserScopeSelect.addEventListener('change', () => refreshFileBrowser());
+  elements.browserFolderSelect.addEventListener('change', refreshFileBrowser);
+  elements.refreshStatusButton.addEventListener('click', refreshStatus);
+  elements.refreshJobsButton.addEventListener('click', refreshJobs);
+  elements.refreshLogsButton.addEventListener('click', refreshLogs);
+  elements.refreshFilesButton.addEventListener('click', refreshFileBrowser);
+  elements.downloadAllButton.addEventListener('click', downloadCurrentFolderZip);
+
+  ['dragenter', 'dragover'].forEach(eventName => {
+    elements.dropZone.addEventListener(eventName, event => {
+      event.preventDefault();
+      elements.dropZone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(eventName => {
+    elements.dropZone.addEventListener(eventName, event => {
+      event.preventDefault();
+      elements.dropZone.classList.remove('dragover');
+    });
+  });
+  elements.dropZone.addEventListener('drop', event => {
+    uploadFiles(event.dataTransfer.files);
+  });
+}
+
+async function bootstrap() {
+  updateWindowLayoutClass();
+  bindEvents();
+  await loadCapabilities();
+  await loadModels(state.capabilities?.config?.llmModel || null);
+  await loadFolders('input', elements.folderSelect);
+  updateSelectableFilesVisibility();
+  await refreshSelectableFiles();
+  await refreshFileBrowser();
+  await Promise.all([refreshStatus(), refreshJobs(), refreshLogs()]);
+  window.setInterval(() => {
+    refreshStatus();
+    refreshJobs();
+    refreshLogs();
+  }, 3000);
+}
+
+bootstrap().catch(error => {
+  setMessage(elements.jobMessage, error.message, true);
+});

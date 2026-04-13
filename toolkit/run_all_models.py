@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 import time
-from providers import fetch_ollama_models
+from toolkit.providers import fetch_ollama_models
 
 # --- Configuration ---
 # Update this path to the file you want to test
@@ -44,7 +44,7 @@ def run_process_with_model(model_name, input_file):
 
 def update_config_model(model_name):
     """Updates the LLM Model in readme.md directly."""
-    readme_path = Path(__file__).parent / 'readme.md'
+    readme_path = Path(__file__).resolve().parent.parent / 'readme.md'
     if not readme_path.exists():
         print("Error: readme.md not found.")
         return
@@ -69,7 +69,7 @@ def update_config_model(model_name):
         f.writelines(updated_lines)
 
 def main():
-    workspace_dir = Path(__file__).parent
+    workspace_dir = Path(__file__).resolve().parent.parent
     
     # Verify input file
     input_path = workspace_dir / INPUT_FILE

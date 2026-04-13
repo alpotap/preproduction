@@ -5,9 +5,9 @@ from openai import OpenAI
 from bs4 import BeautifulSoup
 from email import message_from_string
 import argparse
-from utils import load_config
-from llm_service import get_corrections_from_llm
-from web_tools import download_url_as_mhtml
+from toolkit.utils import load_config
+from toolkit.llm_service import get_corrections_from_llm
+from toolkit.web_tools import download_url_as_mhtml
 
 def process_mhtml(mhtml_file, config, client):
     with open(mhtml_file, 'r', encoding='utf-8') as f:
@@ -33,7 +33,7 @@ def process_mhtml(mhtml_file, config, client):
             tag = element.name
             structured_content.append({'type': tag, 'text': text})
     print(f"Extracted {len(structured_content)} structured elements from {mhtml_file}")
-    output_md_dir = Path(__file__).parent / "output" / "md"
+    output_md_dir = Path(__file__).resolve().parent.parent / "output" / "md"
     output_md_dir.mkdir(exist_ok=True)
     output_file = output_md_dir / (mhtml_file.stem + '.md')
     config_copy = config.copy()
@@ -89,7 +89,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config()
-    workspace_dir = Path(__file__).parent
+    workspace_dir = Path(__file__).resolve().parent.parent
     input_dir = workspace_dir / 'input'
     input_dir.mkdir(exist_ok=True)
     output_mhtml_dir = workspace_dir / 'output' / 'mhtml'

@@ -5,6 +5,10 @@ from pathlib import Path
 import csv
 from datetime import datetime
 
+
+def _workspace_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
 def load_config():
     """Loads configuration from the readme.md file."""
     config = {
@@ -26,7 +30,7 @@ def load_config():
         'output_types': 'inline, track_changes, hybrid',
         'default_output_format': 'md'
     }
-    readme_path = Path(__file__).parent / 'readme.md'
+    readme_path = _workspace_root() / 'readme.md'
     if not readme_path.exists():
         return config
     with open(readme_path, 'r', encoding='utf-8') as f:
@@ -55,7 +59,7 @@ def load_config():
 
 def save_config(config_to_save):
     """Updates specific keys in the readme.md configuration."""
-    readme_path = Path(__file__).parent / 'readme.md'
+    readme_path = _workspace_root() / 'readme.md'
     if not readme_path.exists():
         return
 

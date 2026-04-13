@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from utils import load_config, save_config
-from output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, serialize_output_types, format_output_types
-from providers import (
+from toolkit.utils import load_config, save_config
+from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, serialize_output_types, format_output_types
+from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
     AZURE_PROVIDER,
@@ -17,7 +17,7 @@ from providers import (
     fetch_lm_studio_models,
     format_model_label,
 )
-from engine import (
+from toolkit.engine import (
     PROMPT_DEFINITIONS,
     DEFAULT_PROMPT_KEY,
     normalize_prompt_key,
@@ -294,7 +294,7 @@ def run_interactive_wizard():
     print("--- Starting Interactive Spell-Check Wizard ---")
 
     config = hydrate_runtime_config(load_config())
-    workspace_dir = Path(__file__).parent
+    workspace_dir = Path(__file__).resolve().parent.parent
     run_consistency_only = False
 
     while True:

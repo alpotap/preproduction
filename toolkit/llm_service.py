@@ -6,13 +6,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 try:
-    from prompts import PROMPTS, DEFAULT_PROMPT_KEY
+    from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY
 except ImportError:
     PROMPTS = {}
     DEFAULT_PROMPT_KEY = "default"
 
 
-RAW_OUTPUT_TRACKER_PATH = Path(__file__).parent / "output" / "llm_raw_output.log"
+RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"
 RAW_OUTPUT_TRACKER_MAX_LINES = 2000
 
 

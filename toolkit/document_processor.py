@@ -6,9 +6,9 @@ from lxml import etree
 from docx import Document
 from docx.shared import RGBColor
 from docx.oxml.ns import qn
-from llm_service import get_corrections_from_llm
+from toolkit.llm_service import get_corrections_from_llm
 try:
-    from prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
+    from toolkit.prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
 except (ImportError, ModuleNotFoundError):
     DEFAULT_PROMPT_KEY = "default"
 
@@ -279,8 +279,13 @@ def _apply_inline_corrections_to_paragraph(para, block_content, block_correction
     para.add_run(block_content[last_end:])
 
 
-def build_correction_plan(input_path, config, client):
+def build_correction_plan(input_path, config, client, should_cancel=None):
     """Build one correction plan from LLM output that can drive multiple renderers."""
+    def _raise_if_canceled():
+        if callable(should_cancel) and should_cancel():
+            raise RuntimeError("Canceled by user request")
+
+    _raise_if_canceled()
     print(f"Loading document: {input_path}")
     doc = Document(input_path)
     prompt_key = config.get('active_prompt', DEFAULT_PROMPT_KEY)
@@ -301,11 +306,13 @@ def build_correction_plan(input_path, config, client):
     current_word_count = 0
 
     for para in all_paragraphs:
+        _raise_if_canceled()
         text = para.text.strip()
         if not text:
             continue
 
         if current_word_count + len(text.split()) > max_input_words and current_batch:
+            _raise_if_canceled()
             _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats)
 
             current_batch = []
@@ -315,6 +322,7 @@ def build_correction_plan(input_path, config, client):
         current_word_count += len(text.split())
 
     if current_batch:
+        _raise_if_canceled()
         _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats)
 
     return correction_plan, stats

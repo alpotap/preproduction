@@ -6,3 +6,6 @@ requests
 svglib
 reportlab
 pywin32
+fastapi
+uvicorn
+python-multipart
