@@ -375,7 +375,7 @@ class JobQueueManager:
                 client,
                 WORKSPACE_DIR,
                 output_dir=output_dir,
-                cleanup_source_mhtml=False,
+                cleanup_source_mhtml=True,
                 should_cancel=lambda: self._cancel_requested(job_id),
             )
             output_count = sum(1 for path in output_dir.rglob("*") if path.is_file())

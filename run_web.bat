@@ -3,6 +3,12 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 REM Starts local_web.py if not running; if running on port 8000, asks whether to restart.
 cd /d "%~dp0"
+
+REM Load Azure AI Foundry environment variables from user profile
+for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_API_KEY 2^>nul') do set "AZURE_AI_FOUNDRY_API_KEY=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_ENDPOINT 2^>nul') do set "AZURE_AI_FOUNDRY_ENDPOINT=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_API_VERSION 2^>nul') do set "AZURE_AI_FOUNDRY_API_VERSION=%%B"
+
 set "PORT=8000"
 set "PIDS="
 

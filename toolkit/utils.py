@@ -24,6 +24,7 @@ def load_config():
         'lm_studio_model_name': '',
         'azure_api_version': '2024-10-21',
         'azure_deployment_name': '',
+        'azure_ai_foundry_api_version': '2025-01-01-preview',
         'azure_ai_foundry_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,

@@ -129,6 +129,8 @@ Drop or choose a `.zip` file in the Wizard upload area. The server will:
 
 ZIP files are not processable by the correction engine — only `.docx`, `.mhtml`, and `.pdf` are picked up.
 
+For Download + Process jobs, `.mhtml` sources are cleaned up after successful conversion so the input folder is left with `.docx` processing files.
+
 ## Configuration and environment setup
 
 All provider variables, runtime keys, and environment setup are documented in [configuration.md](configuration.md).
@@ -136,6 +138,8 @@ All provider variables, runtime keys, and environment setup are documented in [c
 ## Web UI troubleshooting
 
 - **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure env vars are set.
+- **Azure AI Foundry model calls fail for gpt-4o-mini** — Set `AZURE_AI_FOUNDRY_ENDPOINT` to `https://<resource>.cognitiveservices.azure.com/` and set `AZURE_AI_FOUNDRY_API_VERSION` to a compatible preview (for example `2025-01-01-preview`).
+- **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.
 - **Job stuck as queued** — Worker thread may have crashed. Restart the server; queued jobs will be restored from history.
 - **Download Folder ZIP returns 400** — No files in the selected folder. Switch scope/folder or upload first.

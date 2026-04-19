@@ -33,11 +33,23 @@ def get_azure_settings(config):
 
 def get_azure_ai_foundry_settings(config):
     """Load Azure AI Foundry settings from env/config."""
+    raw = config.get("azure_ai_foundry_model_name", "") or ""
+    model_names = [m.strip() for m in raw.split(",") if m.strip()]
     return {
         "api_key": os.getenv("AZURE_AI_FOUNDRY_API_KEY"),
         "endpoint": os.getenv("AZURE_AI_FOUNDRY_ENDPOINT"),
-        "model_name": config.get("azure_ai_foundry_model_name", "").strip(),
+        "api_version": os.getenv("AZURE_AI_FOUNDRY_API_VERSION") or config.get("azure_ai_foundry_api_version", "2025-01-01-preview"),
+        "model_name": model_names[0] if model_names else "",
+        "model_names": model_names,
     }
+
+
+def _normalize_azure_endpoint(endpoint):
+    """Normalize Azure endpoint for AzureOpenAI client usage."""
+    value = (endpoint or "").strip().rstrip("/")
+    if value.lower().endswith("/openai/v1"):
+        value = value[: -len("/openai/v1")]
+    return value
 
 
 def get_lm_studio_settings(config):
@@ -92,9 +104,10 @@ def create_client(provider, config):
         if not foundry_settings["endpoint"]:
             raise RuntimeError("Missing AZURE_AI_FOUNDRY_ENDPOINT environment variable.")
 
-        return OpenAI(
+        return AzureOpenAI(
             api_key=foundry_settings["api_key"],
-            base_url=foundry_settings["endpoint"].rstrip("/"),
+            azure_endpoint=_normalize_azure_endpoint(foundry_settings["endpoint"]),
+            api_version=foundry_settings["api_version"],
         )
 
     if normalized_provider == LM_STUDIO_PROVIDER:

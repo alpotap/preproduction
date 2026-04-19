@@ -6,10 +6,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 try:
-    from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY
+    from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY, PROMPT_DEFINITIONS
 except ImportError:
     PROMPTS = {}
     DEFAULT_PROMPT_KEY = "default"
+    PROMPT_DEFINITIONS = {}
 
 
 RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"
@@ -97,3 +98,36 @@ def get_corrections_from_llm(text, config, client):
             print(f"  [!] Error calling LLM API (Attempt {attempt+1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
                 return [], 0, 0, llm_time
+
+
+def get_text_from_llm(text, config, client):
+    """Sends text to the LLM and returns a plain-text response (not JSON), input/output tokens, and duration."""
+    prompt_key = config.get('active_prompt', DEFAULT_PROMPT_KEY)
+    prompt_template = PROMPTS.get(prompt_key)
+    if not prompt_template:
+        prompt_template = PROMPTS.get(DEFAULT_PROMPT_KEY, "Summarize this {language} text. Text: {text}")
+
+    prompt = prompt_template.format(language=config['language'], text=text)
+
+    # Allow prompts to override max_tokens (e.g. course_summary needs more output tokens)
+    prompt_def = PROMPT_DEFINITIONS.get(prompt_key, {})
+    max_tokens = prompt_def.get('max_tokens_override') or config['llm_max_tokens']
+
+    llm_start_time = time.time()
+    try:
+        response = client.chat.completions.create(
+            model=config['llm_model'],
+            messages=[{"role": "user", "content": prompt}],
+            temperature=config['llm_temperature'],
+            max_tokens=max_tokens,
+        )
+        llm_time = time.time() - llm_start_time
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        content = response.choices[0].message.content.strip()
+        _append_raw_llm_output(config.get('llm_model', ''), prompt_key, content)
+        return content, input_tokens, output_tokens, llm_time
+    except Exception as e:
+        llm_time = time.time() - llm_start_time
+        print(f"  [!] Error calling LLM API for text generation: {e}")
+        return "", 0, 0, llm_time

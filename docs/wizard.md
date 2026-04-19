@@ -115,8 +115,10 @@ All selected formats are generated from a **single LLM pass** — no extra API c
 ## CLI troubleshooting
 
 - **No processable files found** — Ensure `.docx`, `.mhtml`, or `.pdf` files exist directly in the selected folder (not in subdirectories). Files with `_corrected` in the name are excluded.
+- **MHTML files remain after a web Download + Process job** — Update to the latest code and rerun. New web jobs clean up source `.mhtml` files after successful conversion.
 - **MHTML/PDF conversion fails** — Requires Microsoft Word and `pywin32`. Run `pip install pywin32` and ensure Word is installed.
 - **No model available** — Check that your LLM provider (Ollama, LM Studio, or Azure) is reachable and configured. See [webapp.md](webapp.md#provider-environment-variables) for Azure setup.
+- **Azure AI Foundry with gpt-4o-mini fails** — Use endpoint root `https://<resource>.cognitiveservices.azure.com/` (not `/openai/v1`) and set `AZURE_AI_FOUNDRY_API_VERSION` (for example `2025-01-01-preview`).
 - **Wizard does not start** — Check `process.py` for syntax errors.
 - **Web UI should run after reboot without a terminal** — Install the Windows service with `Register-WebService.ps1 -Action Install` as described in [webapp.md](webapp.md#windows-service-deployment).
 

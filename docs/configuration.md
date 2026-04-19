@@ -30,6 +30,7 @@ Current keys:
 - LM Studio Model Name
 - Azure API Version
 - Azure Deployment Name
+- Azure AI Foundry API Version
 - Azure AI Foundry Model Name
 - LLM Temperature
 - LLM Max Tokens
@@ -106,17 +107,34 @@ Required:
 
 ```powershell
 $env:AZURE_AI_FOUNDRY_API_KEY = "your-foundry-key"
-$env:AZURE_AI_FOUNDRY_ENDPOINT = "https://your-resource.services.ai.azure.com/openai/v1/"
+$env:AZURE_AI_FOUNDRY_ENDPOINT = "https://your-resource.cognitiveservices.azure.com/"
 ```
+
+Optional (recommended for model compatibility):
+
+```powershell
+$env:AZURE_AI_FOUNDRY_API_VERSION = "2025-01-01-preview"
+```
+
+The API key is found in the Azure AI Foundry portal under your project → **Settings → API keys**.
+
+The endpoint base URL follows the pattern:
+`https://<resource-name>.cognitiveservices.azure.com/`
+
+Do **not** include a specific deployment path or `api-version` query string in the endpoint — the SDK appends those automatically.
+
+Set `Azure AI Foundry Model Name` in [readme.md](../readme.md) to the model name as shown in your deployment (for example, `gpt-4o-mini`).
+Set `Azure AI Foundry API Version` in [readme.md](../readme.md) if you need to override the default.
 
 Permanent setup:
 
 ```powershell
 setx AZURE_AI_FOUNDRY_API_KEY "your-foundry-key"
-setx AZURE_AI_FOUNDRY_ENDPOINT "https://your-resource.services.ai.azure.com/openai/v1/"
+setx AZURE_AI_FOUNDRY_ENDPOINT "https://your-resource.cognitiveservices.azure.com/"
+setx AZURE_AI_FOUNDRY_API_VERSION "2025-01-01-preview"
 ```
 
-Set `Azure AI Foundry Model Name` in [readme.md](../readme.md) to your deployed model name.
+After running `setx`, close and reopen any terminal window for the values to take effect.
 
 ## Verify environment variables
 
@@ -126,6 +144,7 @@ echo $env:AZURE_OPENAI_API_KEY
 echo $env:AZURE_OPENAI_ENDPOINT
 echo $env:AZURE_AI_FOUNDRY_API_KEY
 echo $env:AZURE_AI_FOUNDRY_ENDPOINT
+echo $env:AZURE_AI_FOUNDRY_API_VERSION
 ```
 
 If values are missing after `setx`, restart the terminal session.

@@ -83,14 +83,15 @@ Input Directory: input
 Output Directory: output
 Highlight Corrections: true
 Add Comments: true
-Active Prompt: default
+Active Prompt: generate_course_summary
 LLM Provider: azure_ai_foundry
-LLM Model: gpt-oss-120b
+LLM Model: gpt-4o-mini
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 Azure API Version: 2025-03-01-preview
-Azure Deployment Name: GPT 40 mini (low quality but very fast)
-Azure AI Foundry Model Name: gpt-oss-120b
+Azure Deployment Name:
+Azure AI Foundry API Version: 2025-01-01-preview
+Azure AI Foundry Model Name: gpt-4o-mini
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: inline, uncommented, track_changes, hybrid
+Output Types: inline

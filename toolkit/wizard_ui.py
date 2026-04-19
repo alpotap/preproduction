@@ -95,8 +95,8 @@ def select_model(default_model, default_provider, config):
         options.append((AZURE_PROVIDER, azure_settings["deployment_name"]))
 
     foundry_settings = get_azure_ai_foundry_settings(config)
-    if foundry_settings["model_name"]:
-        options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_settings["model_name"]))
+    for foundry_model in foundry_settings["model_names"]:
+        options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_model))
 
     lm_studio_settings = get_lm_studio_settings(config)
     if lm_studio_models:
@@ -104,7 +104,7 @@ def select_model(default_model, default_provider, config):
     else:
         print(f"LM Studio unavailable or has no loaded model at {lm_studio_settings['base_url']}.")
 
-    if not ollama_models and not lm_studio_models and not azure_settings["deployment_name"] and not foundry_settings["model_name"]:
+    if not ollama_models and not lm_studio_models and not azure_settings["deployment_name"] and not foundry_settings["model_names"]:
         print("No models found. Ensure Ollama/LM Studio is running and/or configure Azure provider.")
     elif not ollama_models and not lm_studio_models:
         print("No models found in local providers (Ollama/LM Studio). Azure providers are available if configured.")
@@ -316,7 +316,7 @@ def run_interactive_wizard():
             if config["llm_provider"] == AZURE_PROVIDER:
                 config["llm_model"] = get_azure_settings(config)["deployment_name"] or selected_model
             elif config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER:
-                config["llm_model"] = get_azure_ai_foundry_settings(config)["model_name"] or selected_model
+                config["llm_model"] = selected_model
             elif config["llm_provider"] == LM_STUDIO_PROVIDER:
                 config["llm_model"] = selected_model
                 config["lm_studio_model_name"] = selected_model

@@ -6,7 +6,7 @@ from lxml import etree
 from docx import Document
 from docx.shared import RGBColor
 from docx.oxml.ns import qn
-from toolkit.llm_service import get_corrections_from_llm
+from toolkit.llm_service import get_corrections_from_llm, get_text_from_llm
 try:
     from toolkit.prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
 except (ImportError, ModuleNotFoundError):
@@ -116,13 +116,20 @@ def _collect_all_paragraphs(doc):
 
 
 def _filter_corrections_for_block(block_content, corrections):
-    """Return only corrections that apply to one paragraph/block of text."""
+    """Return only corrections that apply to one paragraph/block of text.
+
+    One entry is emitted per occurrence of the original text in the block so
+    that every repeated instance (e.g. missing terminal punctuation appearing
+    multiple times) is marked, not just the first one the renderer finds.
+    """
     block_corrections = []
     for corr in corrections:
         original = corr.get('original')
         corrected = corr.get('corrected', original)
         if original and original in block_content and original != corrected:
-            block_corrections.append(corr)
+            count = block_content.count(original)
+            for _ in range(count):
+                block_corrections.append(corr)
     return block_corrections
 
 
@@ -378,6 +385,223 @@ def process_docx(input_path, output_path, config, client):
     correction_plan, stats = build_correction_plan(input_path, config, client)
     apply_inline_correction_plan(input_path, output_path, correction_plan, config)
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Prepend-text output: generate text and insert it at the top of the document
+# ---------------------------------------------------------------------------
+
+def build_prepend_plan(input_path, config, client):
+    """Collect all document text and send it to the LLM as a single request for plain-text generation."""
+    print(f"Loading document: {input_path}")
+    doc = Document(input_path)
+
+    stats = {
+        "total_text_size": 0,
+        "total_llm_time": 0.0,
+        "total_input_tokens": 0,
+        "total_tokens_generated": 0,
+    }
+
+    all_paragraphs = _collect_all_paragraphs(doc)
+    full_text = "\n".join(para.text for para in all_paragraphs if para.text.strip())
+    stats["total_text_size"] = len(full_text)
+
+    if not full_text.strip():
+        print("  [!] Document appears to be empty. No summary generated.")
+        return "", stats
+
+    print("Sending document text to LLM for summary generation...")
+    generated_text, input_tokens, output_tokens, llm_time = get_text_from_llm(full_text, config, client)
+
+    stats["total_input_tokens"] = input_tokens
+    stats["total_tokens_generated"] = output_tokens
+    stats["total_llm_time"] = llm_time
+
+    return generated_text.strip(), stats
+
+
+def apply_prepend_plan(input_path, output_path, prepend_text):
+    """Insert a 'Chapter Summary' heading and the generated text at the top of the DOCX."""
+    print(f"Loading document: {input_path}")
+    doc = Document(input_path)
+    body = doc.element.body
+
+    # Add heading and text paragraphs (python-docx appends to end)
+    heading = doc.add_heading("Chapter Summary", level=2)
+    text_para = doc.add_paragraph(prepend_text)
+
+    # Move them both to the front of the document body
+    body.remove(text_para._element)
+    body.remove(heading._element)
+    body.insert(0, text_para._element)
+    body.insert(0, heading._element)
+
+    doc.save(output_path)
+    print(f"\nSuccessfully saved document with summary to: {output_path}")
+
+
+def _extract_document_structure(file_path, max_key_points=15):
+    """Extract document structure: title, headings, and key content for course overview."""
+    try:
+        doc = Document(file_path)
+        structure = {
+            "title": file_path.stem,
+            "headings": [],
+            "key_content": [],
+        }
+        
+        # Extract headings and surrounding content
+        for i, para in enumerate(doc.paragraphs):
+            text = para.text.strip()
+            if not text or len(text) < 3:
+                continue
+            
+            # Capture heading-level content  
+            if para.style.name.startswith("Heading"):
+                level = int(para.style.name.split()[-1]) if para.style.name.split()[-1].isdigit() else 1
+                if level <= 2:  # Keep only top 2 levels of headings
+                    structure["headings"].append(text)
+            
+            # Capture bullet points and numbered lists
+            if para.style.name.startswith("List"):
+                clean_text = text.lstrip("•-*0123456789.). ").strip()
+                if clean_text and len(structure["key_content"]) < max_key_points:
+                    structure["key_content"].append(clean_text)
+            
+            # Also capture first substantive paragraph after headings (intro text)
+            elif para.style.name in ("Normal", "Body Text", "Body Text 2"):
+                # Look for intro text (paragraph after a heading, relatively short and substantive)
+                if 20 < len(text) < 300 and any(w in text.lower() for w in ["learn", "understand", "explore", "examine", "review", "overview", "introduction"]):
+                    if len(structure["key_content"]) < max_key_points:
+                        # Take first 100 chars of intro text
+                        structure["key_content"].append(text[:100] + "..." if len(text) > 100 else text)
+        
+        return structure
+    except Exception as e:
+        print(f"  [!] Error extracting structure from {file_path.name}: {e}")
+        return None
+
+
+def build_course_summary_plan(file_paths, config, client):
+    """Extract document structures and send structured course outline to LLM for synthesis."""
+    print(f"Analyzing {len(file_paths)} document(s) to extract course structure...")
+    
+    stats = {
+        "total_text_size": 0,
+        "total_llm_time": 0.0,
+        "total_input_tokens": 0,
+        "total_tokens_generated": 0,
+    }
+    
+    # Extract structure from all documents
+    course_structure = []
+    for file_path in file_paths:
+        structure = _extract_document_structure(file_path)
+        if structure:
+            course_structure.append(structure)
+            print(f"  Extracted: {structure['title']} ({len(structure['headings'])} sections, {len(structure['key_content'])} topics)")
+    
+    if not course_structure:
+        print("  [!] No valid documents found. No course summary generated.")
+        return "", stats
+    
+    # Build structured summary for LLM
+    structured_input = "COURSE STRUCTURE ANALYSIS\n" + "=" * 50 + "\n\n"
+    
+    for doc_struct in course_structure:
+        structured_input += f"MODULE: {doc_struct['title']}\n"
+        if doc_struct['headings']:
+            structured_input += "Main Topics:\n"
+            for heading in doc_struct['headings'][:8]:  # Limit headings
+                structured_input += f"  • {heading}\n"
+        if doc_struct['key_content']:
+            structured_input += "Key Content:\n"
+            for point in doc_struct['key_content'][:10]:  # Limit points
+                structured_input += f"  • {point}\n"
+        structured_input += "\n"
+    
+    stats["total_text_size"] = len(structured_input)
+    
+    print("Sending course structure to LLM for synthesis...")
+    generated_text, input_tokens, output_tokens, llm_time = get_text_from_llm(structured_input, config, client)
+    
+    stats["total_input_tokens"] = input_tokens
+    stats["total_tokens_generated"] = output_tokens
+    stats["total_llm_time"] = llm_time
+    
+    return generated_text.strip(), stats
+
+
+def save_course_summary(output_path, course_summary_text):
+    """Save the generated course summary as a standalone DOCX file with proper section formatting."""
+    from docx.shared import Inches
+
+    doc = Document()
+    section = doc.sections[0]
+    section.top_margin = Inches(1)
+    section.bottom_margin = Inches(1)
+    section.left_margin = Inches(1.2)
+    section.right_margin = Inches(1.2)
+
+    doc.add_heading("Course Summary", level=1)
+
+    # Parse labeled sections [SECTION NAME] from LLM output
+    SECTION_LABELS = {
+        "[COURSE DESCRIPTION]": "Course Description",
+        "[INTENDED AUDIENCE]": "Intended Audience",
+        "[COURSE LENGTH]": "Course Length",
+        "[LEARNING OBJECTIVES]": "Learning Objectives",
+    }
+
+    lines = course_summary_text.split('\n')
+    current_section_label = None
+    current_prose_lines = []
+
+    def _flush_prose(lines_buf, section_label):
+        if lines_buf:
+            text = ' '.join(lines_buf).strip()
+            if text:
+                doc.add_paragraph(text)
+            lines_buf.clear()
+
+    for line in lines:
+        raw = line.strip()
+        upper = raw.upper()
+
+        # Detect section labels — may come without brackets too (LLM sometimes strips them)
+        matched_label = None
+        for tag, label in SECTION_LABELS.items():
+            if upper == tag or upper == tag.strip('[]') or upper.startswith(tag):
+                matched_label = label
+                break
+            # Also match without brackets e.g. "COURSE DESCRIPTION"
+            if upper == label.upper() or upper.startswith(label.upper() + ':'):
+                matched_label = label
+                break
+
+        if matched_label:
+            _flush_prose(current_prose_lines, current_section_label)
+            current_section_label = matched_label
+            doc.add_heading(matched_label, level=2)
+            continue
+
+        if not raw:
+            _flush_prose(current_prose_lines, current_section_label)
+            continue
+
+        if raw.startswith(('•', '-', '*')) and current_section_label == "Learning Objectives":
+            _flush_prose(current_prose_lines, current_section_label)
+            clean_text = raw.lstrip('•-* ').strip()
+            if clean_text:
+                doc.add_paragraph(clean_text, style='List Bullet')
+        else:
+            current_prose_lines.append(raw)
+
+    _flush_prose(current_prose_lines, current_section_label)
+
+    doc.save(output_path)
+    print(f"\nSuccessfully saved course summary to: {output_path}")
 
 
 # ---------------------------------------------------------------------------

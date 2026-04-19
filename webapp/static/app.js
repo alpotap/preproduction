@@ -26,6 +26,7 @@ const elements = {
   chooseFilesButton: document.getElementById('chooseFilesButton'),
   uploadSummary: document.getElementById('uploadSummary'),
   urlsInput: document.getElementById('urlsInput'),
+  promptCategorySelect: document.getElementById('promptCategorySelect'),
   promptSelect: document.getElementById('promptSelect'),
   providerSelect: document.getElementById('providerSelect'),
   modelSelect: document.getElementById('modelSelect'),
@@ -142,7 +143,7 @@ async function loadCapabilities() {
 }
 
 function renderCapabilities() {
-  const { prompts, providers, outputTypes, config } = state.capabilities;
+  const { prompts, promptCategories, providers, outputTypes, config } = state.capabilities;
   state.promptMap = Object.fromEntries(prompts.map(prompt => [prompt.key, prompt]));
   state.promptAbbrMap = Object.fromEntries(
     prompts
@@ -150,11 +151,19 @@ function renderCapabilities() {
       .map(prompt => [String(prompt.abbr).toUpperCase(), prompt]),
   );
 
-  elements.promptSelect.innerHTML = prompts
-    .map(prompt => `<option value="${prompt.key}">${prompt.name}</option>`)
+  // Populate category dropdown
+  const categories = promptCategories || [];
+  elements.promptCategorySelect.innerHTML = categories
+    .map(cat => `<option value="${cat.key}">${cat.label}</option>`)
     .join('');
-  elements.promptSelect.value = config.activePrompt;
-  updatePromptTooltip();
+
+  // Set initial category from active prompt
+  const activePrompt = state.promptMap[config.activePrompt];
+  const initialCategory = activePrompt?.category || (categories[0]?.key ?? '');
+  elements.promptCategorySelect.value = initialCategory;
+
+  // Populate prompt dropdown filtered to selected category
+  filterPromptsByCategory(initialCategory, config.activePrompt);
 
   elements.providerSelect.innerHTML = providers
     .map(provider => `<option value="${provider.key}">${provider.label}</option>`)
@@ -177,6 +186,21 @@ function renderCapabilities() {
 function updatePromptTooltip() {
   const prompt = state.promptMap[elements.promptSelect.value];
   elements.promptTooltipText.textContent = prompt?.details || prompt?.summary || 'Prompt details unavailable.';
+}
+
+function filterPromptsByCategory(categoryKey, preferredPromptKey = null) {
+  const prompts = state.capabilities?.prompts || [];
+  const filtered = prompts.filter(p => p.category === categoryKey);
+  elements.promptSelect.innerHTML = filtered
+    .map(p => `<option value="${p.key}">${p.name}</option>`)
+    .join('');
+  // Prefer the currently active prompt if it belongs to this category, otherwise pick first
+  if (preferredPromptKey && filtered.some(p => p.key === preferredPromptKey)) {
+    elements.promptSelect.value = preferredPromptKey;
+  } else if (filtered.length > 0) {
+    elements.promptSelect.value = filtered[0].key;
+  }
+  updatePromptTooltip();
 }
 
 async function loadModels(preferredModel = null) {
@@ -270,6 +294,9 @@ function selectedInputFiles() {
 function updateSelectableFilesVisibility() {
   const isProcessTask = elements.taskType.value === 'process';
   elements.fileSelectBlock.hidden = !isProcessTask;
+  if (!isProcessTask) {
+    setMessage(elements.selectableFilesNote, 'File selection is available when Task Type is set to Process Existing Files.');
+  }
 }
 
 async function refreshSelectableFiles() {
@@ -573,6 +600,9 @@ function bindEvents() {
   elements.enqueueJobButton.addEventListener('click', enqueueJob);
   elements.providerSelect.addEventListener('change', loadModels);
   elements.promptSelect.addEventListener('change', updatePromptTooltip);
+  elements.promptCategorySelect.addEventListener('change', () =>
+    filterPromptsByCategory(elements.promptCategorySelect.value),
+  );
   elements.logKindSelect.addEventListener('change', refreshLogs);
   elements.browserScopeSelect.addEventListener('change', () => refreshFileBrowser());
   elements.browserFolderSelect.addEventListener('change', refreshFileBrowser);

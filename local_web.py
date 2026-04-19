@@ -120,8 +120,15 @@ def get_capabilities() -> dict:
                 "name": value.get("name", key),
                 "summary": value.get("summary", ""),
                 "details": _build_prompt_details(value),
+                "category": value.get("prompt_category", "copy_editing"),
             }
             for key, value in PROMPT_DEFINITIONS.items()
+        ],
+        "promptCategories": [
+            {"key": "copy_editing", "label": "Copy Editing"},
+            {"key": "document_analysis", "label": "Document Analysis"},
+            {"key": "multi_document_analysis", "label": "Multi-Document Analysis"},
+            {"key": "content_generation", "label": "Content Generation"},
         ],
         "outputTypes": [
             {
@@ -152,8 +159,7 @@ def get_models(provider: str = Query(...)) -> dict:
         deployment_name = get_azure_settings(config).get("deployment_name")
         models = [deployment_name] if deployment_name else []
     elif provider == AZURE_AI_FOUNDRY_PROVIDER:
-        model_name = get_azure_ai_foundry_settings(config).get("model_name")
-        models = [model_name] if model_name else []
+        models = get_azure_ai_foundry_settings(config).get("model_names", [])
     else:
         raise HTTPException(status_code=400, detail="Unsupported provider")
     return {"models": models}

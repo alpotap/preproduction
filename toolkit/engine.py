@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from toolkit.utils import log_performance_stats
-from toolkit.document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan
+from toolkit.document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan, build_prepend_plan, apply_prepend_plan, build_course_summary_plan, save_course_summary
 from toolkit.web_tools import download_url_as_mhtml
 from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, format_output_types
 from toolkit.summary_report import summarize_correction_plan, update_summary_report
@@ -24,7 +24,7 @@ from toolkit.providers import (
 )
 
 try:
-    from toolkit.prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation
+    from toolkit.prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation, get_prompt_output_mode
 except (ImportError, ModuleNotFoundError):
     DEFAULT_PROMPT_KEY = "default"
     PROMPT_DEFINITIONS = {
@@ -36,6 +36,9 @@ except (ImportError, ModuleNotFoundError):
 
     def get_prompt_abbreviation(prompt_key, fallback="GEN"):
         return fallback
+
+    def get_prompt_output_mode(prompt_key):
+        return "corrections"
 
 try:
     from toolkit.tracked_processor import process_docx_tracked_with_plan
@@ -201,6 +204,65 @@ def process_files(
 
     print(f"Selected output types: {format_output_types(selected_output_types)}")
 
+    # Check if this is a course-level summary request (handles all files at once, not per-file)
+    active_prompt_key = config.get("active_prompt", DEFAULT_PROMPT_KEY)
+    output_mode = get_prompt_output_mode(active_prompt_key)
+    
+    if output_mode == "course_summary":
+        print("\n--- Running Course Summary Analysis (Folder-Level) ---")
+        try:
+            # Convert all file paths to .docx format first (if needed)
+            docx_files = []
+            for file_path in files_to_process:
+                _raise_if_canceled()
+                if file_path.suffix.lower() == ".docx":
+                    docx_files.append(file_path)
+            
+            if not docx_files:
+                print("  [!] No valid documents found for course summary analysis.")
+                return {
+                    "files": [],
+                    "timestamp": run_timestamp,
+                    "status": "failed",
+                    "error": "No documents provided",
+                }
+            
+            print(f"Building course summary from {len(docx_files)} document(s)...")
+            course_summary_text, stats = build_course_summary_plan(docx_files, config, client)
+            
+            if course_summary_text:
+                # Save course summary as standalone file in the output directory
+                summary_output_path = output_dir / "Course_Summary.docx"
+                save_course_summary(str(summary_output_path), course_summary_text)
+                
+                run_totals["totalInputTokens"] = stats["total_input_tokens"]
+                run_totals["totalTokensGenerated"] = stats["total_tokens_generated"]
+                run_totals["totalLlmTime"] = stats["total_llm_time"]
+                
+                run_files.append({
+                    "file": "Course_Summary.docx",
+                    "location": str(summary_output_path.relative_to(workspace_dir)),
+                    "inputTokens": stats["total_input_tokens"],
+                    "tokensGenerated": stats["total_tokens_generated"],
+                    "llmTime": stats["total_llm_time"],
+                })
+                print(f"Course summary completed in {stats['total_llm_time']:.2f}s")
+            else:
+                print("  [!] Course summary generation returned empty text.")
+                run_status = "failed"
+        except Exception as e:
+            print(f"  [!] Error during course summary generation: {e}")
+            run_status = "failed"
+            canceled_error = e
+        
+        # Return early for course summary (no per-document performance stats to log)
+        return {
+            "files": run_files,
+            "timestamp": run_timestamp,
+            "status": run_status,
+            "summary": {"correctionCount": 0, "categoryCount": {}},
+        }
+
     try:
         for file_path in files_to_process:
             _raise_if_canceled()
@@ -219,7 +281,7 @@ def process_files(
                     continue
 
                 print("  -> Converting MHTML to DOCX using MS Word...")
-                converted_docx_path = file_path.with_suffix(".from_mhtml.docx")
+                converted_docx_path = file_path.with_suffix(".docx")
                 try:
                     mhtml_to_docx(str(file_path), str(converted_docx_path))
                     processing_file_path = converted_docx_path
@@ -262,64 +324,81 @@ def process_files(
                     continue
 
             try:
-                correction_plan, stats = build_correction_plan(
-                    str(processing_file_path),
-                    config,
-                    client,
-                    should_cancel=_raise_if_canceled,
-                )
+                active_prompt_key = config.get("active_prompt", DEFAULT_PROMPT_KEY)
+                output_mode = get_prompt_output_mode(active_prompt_key)
+                prompt_abbr = get_prompt_abbreviation(active_prompt_key, fallback="GEN")
+                output_stem = build_output_stem(file_path)
+
+                if output_mode == "prepend_text":
+                    prepend_text, stats = build_prepend_plan(
+                        str(processing_file_path),
+                        config,
+                        client,
+                    )
+                    if prepend_text:
+                        output_path = output_dir / f"{output_stem}_{prompt_abbr}.docx"
+                        apply_prepend_plan(str(processing_file_path), str(output_path), prepend_text)
+                        successful_output_types = ["prepend_text"]
+                    else:
+                        print(f"  [!] Summary generation returned empty text. Skipping output.")
+                        successful_output_types = []
+                    correction_summary = {"correctionCount": 0, "categoryCounts": {}}
+                else:
+                    correction_plan, stats = build_correction_plan(
+                        str(processing_file_path),
+                        config,
+                        client,
+                        should_cancel=_raise_if_canceled,
+                    )
+                    correction_summary = summarize_correction_plan(correction_plan)
+                    successful_output_types = []
+
+                    for output_type in selected_output_types:
+                        _raise_if_canceled()
+                        suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
+                        output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
+
+                        if output_type == "inline":
+                            try:
+                                apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                                successful_output_types.append(output_type)
+                            except Exception as e:
+                                print(f"  [!] Inline DOCX output failed: {e}")
+
+                        elif output_type == "uncommented":
+                            uncommented_config = dict(config)
+                            uncommented_config["add_comments"] = False
+                            uncommented_config["show_deletion_markers"] = False
+                            try:
+                                apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, uncommented_config)
+                                successful_output_types.append(output_type)
+                            except Exception as e:
+                                print(f"  [!] Uncommented DOCX output failed: {e}")
+
+                        elif output_type == "track_changes":
+                            if process_docx_tracked_with_plan is None:
+                                print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
+                                print("      Skipping Track Changes output.")
+                            else:
+                                try:
+                                    process_docx_tracked_with_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                                    successful_output_types.append(output_type)
+                                except Exception as e:
+                                    print(f"  [!] Track Changes DOCX output failed: {e}")
+
+                        elif output_type == "hybrid":
+                            try:
+                                apply_hybrid_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                                successful_output_types.append(output_type)
+                            except Exception as e:
+                                print(f"  [!] Hybrid DOCX output failed: {e}")
+
             except Exception as e:
                 if str(e) == "Canceled by user request":
                     raise
-                print(f"  [!] Could not build correction plan: {e}")
+                print(f"  [!] Could not process file: {e}")
                 print(f"      Skipping file: {file_path.name}")
                 continue
-
-            correction_summary = summarize_correction_plan(correction_plan)
-            successful_output_types = []
-
-            output_stem = build_output_stem(file_path)
-            prompt_abbr = get_prompt_abbreviation(config.get("active_prompt", DEFAULT_PROMPT_KEY), fallback="GEN")
-
-            for output_type in selected_output_types:
-                _raise_if_canceled()
-                suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
-                output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
-
-                if output_type == "inline":
-                    try:
-                        apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
-                        successful_output_types.append(output_type)
-                    except Exception as e:
-                        print(f"  [!] Inline DOCX output failed: {e}")
-
-                elif output_type == "uncommented":
-                    uncommented_config = dict(config)
-                    uncommented_config["add_comments"] = False
-                    uncommented_config["show_deletion_markers"] = False
-                    try:
-                        apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, uncommented_config)
-                        successful_output_types.append(output_type)
-                    except Exception as e:
-                        print(f"  [!] Uncommented DOCX output failed: {e}")
-
-                elif output_type == "track_changes":
-                    if process_docx_tracked_with_plan is None:
-                        print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
-                        print("      Skipping Track Changes output.")
-                    else:
-                        try:
-                            process_docx_tracked_with_plan(str(processing_file_path), str(output_path), correction_plan, config)
-                            successful_output_types.append(output_type)
-                        except Exception as e:
-                            print(f"  [!] Track Changes DOCX output failed: {e}")
-
-                elif output_type == "hybrid":
-                    try:
-                        apply_hybrid_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
-                        successful_output_types.append(output_type)
-                    except Exception as e:
-                        print(f"  [!] Hybrid DOCX output failed: {e}")
 
             total_doc_time = time.time() - doc_start_time
             model_used = config["llm_model"]

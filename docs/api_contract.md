@@ -40,6 +40,9 @@ Response fields:
 
 Returns provider connectivity/config snapshots.
 
+Notes:
+- For `azureAiFoundry`, endpoint should be configured as `https://<resource>.cognitiveservices.azure.com/` and API version can be controlled with `AZURE_AI_FOUNDRY_API_VERSION` or `Azure AI Foundry API Version` in `readme.md`.
+
 ## Folder and File Endpoints
 
 ### GET /api/folders?scope=input|output
