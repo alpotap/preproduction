@@ -1,5 +1,6 @@
 """Core processing engine functions shared by CLI, future API, and other integrations."""
 
+from collections import Counter
 import time
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ from toolkit.utils import log_performance_stats
 from toolkit.document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan
 from toolkit.web_tools import download_url_as_mhtml
 from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, format_output_types
+from toolkit.summary_report import summarize_correction_plan, update_summary_report
 from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
@@ -185,163 +187,238 @@ def process_files(
     output_dir.mkdir(parents=True, exist_ok=True)
     mhtml_sources_to_cleanup = []
     selected_output_types = normalize_output_types(config.get("output_types", DEFAULT_OUTPUT_TYPES))
+    run_timestamp = datetime.now().isoformat()
+    run_status = "completed"
+    run_files = []
+    run_category_counts = Counter()
+    run_totals = {
+        "correctionCount": 0,
+        "totalInputTokens": 0,
+        "totalTokensGenerated": 0,
+        "totalLlmTime": 0.0,
+    }
+    canceled_error = None
 
     print(f"Selected output types: {format_output_types(selected_output_types)}")
 
-    for file_path in files_to_process:
-        _raise_if_canceled()
-        print(f"\n--- Processing: {file_path.name} ---")
-        doc_start_time = time.time()
-
-        processing_file_path = file_path
-        source_type = source_type_override or file_path.suffix.lower().strip(".")
-
-        if source_type == "mhtml":
-            if mhtml_to_docx is None:
-                print("  [!] MHTML to DOCX conversion is unavailable.")
-                print("      This feature requires 'pywin32' (Windows only) and MS Word.")
-                print("      To install, run: pip install pywin32")
-                print(f"      Skipping file: {file_path.name}")
-                continue
-
-            print("  -> Converting MHTML to DOCX using MS Word...")
-            converted_docx_path = file_path.with_suffix(".from_mhtml.docx")
-            try:
-                mhtml_to_docx(str(file_path), str(converted_docx_path))
-                processing_file_path = converted_docx_path
-                if cleanup_source_mhtml:
-                    mhtml_sources_to_cleanup.append(file_path)
-                print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
-            except Exception as e:
-                print(f"  [!] MHTML to DOCX conversion failed: {e}")
-                print("      Ensure MS Word is installed and 'win32com' is working.")
-                print(f"      Skipping file: {file_path.name}")
-                continue
-
-        elif source_type == "pdf":
-            if pdf_to_docx is None:
-                print("  [!] PDF to DOCX conversion is unavailable.")
-                print("      This feature requires 'pywin32' (Windows only) and MS Word.")
-                print("      To install, run: pip install pywin32")
-                print(f"      Skipping file: {file_path.name}")
-                continue
-
-            print("  -> Converting PDF to DOCX using MS Word...")
-            converted_docx_path = file_path.with_suffix(".from_pdf.docx")
-            try:
-                pdf_to_docx(str(file_path), str(converted_docx_path))
-                processing_file_path = converted_docx_path
-                print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
-
-                pdf_archive_dir = file_path.parent / "pdf"
-                try:
-                    pdf_archive_dir.mkdir(exist_ok=True)
-                    pdf_destination = pdf_archive_dir / file_path.name
-                    file_path.rename(pdf_destination)
-                    print(f"  -> Moved source PDF to: {pdf_destination.relative_to(workspace_dir).as_posix()}")
-                except Exception as e:
-                    print(f"  [!] Could not move PDF to archive subdirectory: {e}")
-            except Exception as e:
-                print(f"  [!] PDF to DOCX conversion failed: {e}")
-                print("      Ensure MS Word is installed and 'win32com' is working.")
-                print(f"      Skipping file: {file_path.name}")
-                continue
-
-        try:
-            correction_plan, stats = build_correction_plan(
-                str(processing_file_path),
-                config,
-                client,
-                should_cancel=_raise_if_canceled,
-            )
-        except Exception as e:
-            if str(e) == "Canceled by user request":
-                raise
-            print(f"  [!] Could not build correction plan: {e}")
-            print(f"      Skipping file: {file_path.name}")
-            continue
-
-        output_stem = build_output_stem(file_path)
-        prompt_abbr = get_prompt_abbreviation(config.get("active_prompt", DEFAULT_PROMPT_KEY), fallback="GEN")
-
-        for output_type in selected_output_types:
+    try:
+        for file_path in files_to_process:
             _raise_if_canceled()
-            suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
-            output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
+            print(f"\n--- Processing: {file_path.name} ---")
+            doc_start_time = time.time()
 
-            if output_type == "inline":
+            processing_file_path = file_path
+            source_type = source_type_override or file_path.suffix.lower().strip(".")
+
+            if source_type == "mhtml":
+                if mhtml_to_docx is None:
+                    print("  [!] MHTML to DOCX conversion is unavailable.")
+                    print("      This feature requires 'pywin32' (Windows only) and MS Word.")
+                    print("      To install, run: pip install pywin32")
+                    print(f"      Skipping file: {file_path.name}")
+                    continue
+
+                print("  -> Converting MHTML to DOCX using MS Word...")
+                converted_docx_path = file_path.with_suffix(".from_mhtml.docx")
                 try:
-                    apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                    mhtml_to_docx(str(file_path), str(converted_docx_path))
+                    processing_file_path = converted_docx_path
+                    if cleanup_source_mhtml:
+                        mhtml_sources_to_cleanup.append(file_path)
+                    print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
                 except Exception as e:
-                    print(f"  [!] Inline DOCX output failed: {e}")
+                    print(f"  [!] MHTML to DOCX conversion failed: {e}")
+                    print("      Ensure MS Word is installed and 'win32com' is working.")
+                    print(f"      Skipping file: {file_path.name}")
+                    continue
 
-            elif output_type == "uncommented":
-                uncommented_config = dict(config)
-                uncommented_config["add_comments"] = False
-                uncommented_config["show_deletion_markers"] = False
+            elif source_type == "pdf":
+                if pdf_to_docx is None:
+                    print("  [!] PDF to DOCX conversion is unavailable.")
+                    print("      This feature requires 'pywin32' (Windows only) and MS Word.")
+                    print("      To install, run: pip install pywin32")
+                    print(f"      Skipping file: {file_path.name}")
+                    continue
+
+                print("  -> Converting PDF to DOCX using MS Word...")
+                converted_docx_path = file_path.with_suffix(".from_pdf.docx")
                 try:
-                    apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, uncommented_config)
-                except Exception as e:
-                    print(f"  [!] Uncommented DOCX output failed: {e}")
+                    pdf_to_docx(str(file_path), str(converted_docx_path))
+                    processing_file_path = converted_docx_path
+                    print(f"  -> Conversion successful. Now processing: {processing_file_path.name}")
 
-            elif output_type == "track_changes":
-                if process_docx_tracked_with_plan is None:
-                    print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
-                    print("      Skipping Track Changes output.")
-                else:
                     try:
-                        process_docx_tracked_with_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                        pdf_archive_dir = file_path.parent / "pdf"
+                        pdf_archive_dir.mkdir(exist_ok=True)
+                        pdf_destination = pdf_archive_dir / file_path.name
+                        file_path.rename(pdf_destination)
+                        print(f"  -> Moved source PDF to: {pdf_destination.relative_to(workspace_dir).as_posix()}")
                     except Exception as e:
-                        print(f"  [!] Track Changes DOCX output failed: {e}")
-
-            elif output_type == "hybrid":
-                try:
-                    apply_hybrid_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                        print(f"  [!] Could not move PDF to archive subdirectory: {e}")
                 except Exception as e:
-                    print(f"  [!] Hybrid DOCX output failed: {e}")
+                    print(f"  [!] PDF to DOCX conversion failed: {e}")
+                    print("      Ensure MS Word is installed and 'win32com' is working.")
+                    print(f"      Skipping file: {file_path.name}")
+                    continue
 
-        total_doc_time = time.time() - doc_start_time
-        model_used = config["llm_model"]
-        total_text_size = stats.get("total_text_size", 0)
-        total_input_tokens = stats.get("total_input_tokens", 0)
-        total_tokens_generated = stats.get("total_tokens_generated", 0)
-        total_llm_time = stats.get("total_llm_time", 0)
-        tokens_per_second = (total_tokens_generated / total_llm_time) if total_llm_time > 0 else 0
-
-        print("\n--- Processing Summary ---")
-        print(f"  Document:              {file_path.name}")
-        print(f"  Total processing time: {total_doc_time:.2f} seconds")
-        print(f"  Text size processed:   {total_text_size} characters")
-        print(f"  Model used:            {model_used}")
-        print(f"  LLM generation time:   {total_llm_time:.2f} seconds")
-        print(f"  Input tokens sent:     {total_input_tokens}")
-        print(f"  Tokens generated:      {total_tokens_generated}")
-        print(f"  Average tokens/sec:    {tokens_per_second:.2f}")
-
-        try:
-            log_data = {
-                "timestamp": datetime.now().isoformat(),
-                "document_name": file_path.name,
-                "model_used": model_used,
-                "total_doc_time": total_doc_time,
-                "total_text_size": total_text_size,
-                "total_llm_time": total_llm_time,
-                "total_input_tokens": total_input_tokens,
-                "total_tokens_generated": total_tokens_generated,
-                "tokens_per_second": tokens_per_second,
-            }
-            log_file = workspace_dir / config["output_dir"] / "performance_log.csv"
-            log_performance_stats(log_file, log_data)
-            print(f"  Performance stats logged to: {log_file.name}")
-        except Exception as e:
-            print(f"  [!] Could not write to performance log: {e}")
-        print("--------------------------")
-
-    if cleanup_source_mhtml:
-        for source_file in mhtml_sources_to_cleanup:
             try:
-                if source_file.exists() and source_file.suffix.lower() == ".mhtml":
-                    source_file.unlink()
-                    print(f"  -> Cleaned up source MHTML file: {source_file.name}")
+                correction_plan, stats = build_correction_plan(
+                    str(processing_file_path),
+                    config,
+                    client,
+                    should_cancel=_raise_if_canceled,
+                )
             except Exception as e:
-                print(f"  [!] Could not remove source MHTML file '{source_file.name}': {e}")
+                if str(e) == "Canceled by user request":
+                    raise
+                print(f"  [!] Could not build correction plan: {e}")
+                print(f"      Skipping file: {file_path.name}")
+                continue
+
+            correction_summary = summarize_correction_plan(correction_plan)
+            successful_output_types = []
+
+            output_stem = build_output_stem(file_path)
+            prompt_abbr = get_prompt_abbreviation(config.get("active_prompt", DEFAULT_PROMPT_KEY), fallback="GEN")
+
+            for output_type in selected_output_types:
+                _raise_if_canceled()
+                suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
+                output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
+
+                if output_type == "inline":
+                    try:
+                        apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                        successful_output_types.append(output_type)
+                    except Exception as e:
+                        print(f"  [!] Inline DOCX output failed: {e}")
+
+                elif output_type == "uncommented":
+                    uncommented_config = dict(config)
+                    uncommented_config["add_comments"] = False
+                    uncommented_config["show_deletion_markers"] = False
+                    try:
+                        apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, uncommented_config)
+                        successful_output_types.append(output_type)
+                    except Exception as e:
+                        print(f"  [!] Uncommented DOCX output failed: {e}")
+
+                elif output_type == "track_changes":
+                    if process_docx_tracked_with_plan is None:
+                        print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
+                        print("      Skipping Track Changes output.")
+                    else:
+                        try:
+                            process_docx_tracked_with_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                            successful_output_types.append(output_type)
+                        except Exception as e:
+                            print(f"  [!] Track Changes DOCX output failed: {e}")
+
+                elif output_type == "hybrid":
+                    try:
+                        apply_hybrid_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
+                        successful_output_types.append(output_type)
+                    except Exception as e:
+                        print(f"  [!] Hybrid DOCX output failed: {e}")
+
+            total_doc_time = time.time() - doc_start_time
+            model_used = config["llm_model"]
+            total_text_size = stats.get("total_text_size", 0)
+            total_input_tokens = stats.get("total_input_tokens", 0)
+            total_tokens_generated = stats.get("total_tokens_generated", 0)
+            total_llm_time = stats.get("total_llm_time", 0)
+            tokens_per_second = (total_tokens_generated / total_llm_time) if total_llm_time > 0 else 0
+
+            print("\n--- Processing Summary ---")
+            print(f"  Document:              {file_path.name}")
+            print(f"  Total processing time: {total_doc_time:.2f} seconds")
+            print(f"  Text size processed:   {total_text_size} characters")
+            print(f"  Model used:            {model_used}")
+            print(f"  LLM generation time:   {total_llm_time:.2f} seconds")
+            print(f"  Input tokens sent:     {total_input_tokens}")
+            print(f"  Tokens generated:      {total_tokens_generated}")
+            print(f"  Average tokens/sec:    {tokens_per_second:.2f}")
+            print(f"  Corrections captured:  {correction_summary['correctionCount']}")
+
+            try:
+                log_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "document_name": file_path.name,
+                    "model_used": model_used,
+                    "total_doc_time": total_doc_time,
+                    "total_text_size": total_text_size,
+                    "total_llm_time": total_llm_time,
+                    "total_input_tokens": total_input_tokens,
+                    "total_tokens_generated": total_tokens_generated,
+                    "tokens_per_second": tokens_per_second,
+                }
+                log_file = workspace_dir / config["output_dir"] / "performance_log.csv"
+                log_performance_stats(log_file, log_data)
+                print(f"  Performance stats logged to: {log_file.name}")
+            except Exception as e:
+                print(f"  [!] Could not write to performance log: {e}")
+            print("--------------------------")
+
+            doc_categories = correction_summary.get("categoryCounts", {})
+            run_totals["correctionCount"] += int(correction_summary.get("correctionCount", 0))
+            run_totals["totalInputTokens"] += int(total_input_tokens)
+            run_totals["totalTokensGenerated"] += int(total_tokens_generated)
+            run_totals["totalLlmTime"] += float(total_llm_time)
+            for category, count in doc_categories.items():
+                run_category_counts[category] += int(count or 0)
+
+            run_files.append(
+                {
+                    "name": file_path.name,
+                    "sourceType": source_type,
+                    "correctionCount": int(correction_summary.get("correctionCount", 0)),
+                    "categoryCounts": doc_categories,
+                    "totalDocTime": total_doc_time,
+                    "totalTextSize": int(total_text_size),
+                    "totalInputTokens": int(total_input_tokens),
+                    "totalTokensGenerated": int(total_tokens_generated),
+                    "totalLlmTime": float(total_llm_time),
+                    "outputTypesGenerated": successful_output_types,
+                }
+            )
+    except Exception as e:
+        if str(e) == "Canceled by user request":
+            run_status = "canceled"
+            canceled_error = e
+        else:
+            run_status = "failed"
+            raise
+    finally:
+        run_record = {
+            "runId": run_timestamp,
+            "timestamp": run_timestamp,
+            "status": run_status,
+            "provider": config.get("llm_provider", ""),
+            "model": config.get("llm_model", ""),
+            "promptKey": config.get("active_prompt", DEFAULT_PROMPT_KEY),
+            "outputTypes": selected_output_types,
+            "fileCount": len(run_files),
+            "correctionCount": int(run_totals["correctionCount"]),
+            "categoryCounts": dict(run_category_counts),
+            "totalInputTokens": int(run_totals["totalInputTokens"]),
+            "totalTokensGenerated": int(run_totals["totalTokensGenerated"]),
+            "totalLlmTime": float(run_totals["totalLlmTime"]),
+            "files": run_files,
+        }
+        try:
+            summary_artifacts = update_summary_report(output_dir, run_record)
+            print(f"Summary report updated: {summary_artifacts['reportPath'].name}")
+        except Exception as e:
+            print(f"  [!] Could not update summary report: {e}")
+
+        if cleanup_source_mhtml:
+            for source_file in mhtml_sources_to_cleanup:
+                try:
+                    if source_file.exists() and source_file.suffix.lower() == ".mhtml":
+                        source_file.unlink()
+                        print(f"  -> Cleaned up source MHTML file: {source_file.name}")
+                except Exception as e:
+                    print(f"  [!] Could not remove source MHTML file '{source_file.name}': {e}")
+
+    if canceled_error is not None:
+        raise canceled_error

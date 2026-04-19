@@ -10,6 +10,8 @@ py .\process.py
 
 The interactive wizard runs in the terminal and guides you through folder selection, uploading, and job processing. No flags are required for normal use.
 
+For unattended web hosting on Windows, use the separate service installer described in [webapp.md](webapp.md#windows-service-deployment).
+
 ## Interactive wizard flow
 
 1. **Task menu** — Choose one of:
@@ -33,7 +35,11 @@ The interactive wizard runs in the terminal and guides you through folder select
 
 8. **Processing** — Sends each file through the LLM and generates selected output formats from one correction plan.
 
-9. **Save preferences** — Model, prompt, and output type choices are stored for the next session.
+9. **Summary report update (automatic)** — After every run, the tool updates:
+   - `output/<folder>/summary_report_state.json` (historical execution stats)
+   - `output/<folder>/summary_report.docx` (readable report with run and category totals)
+
+10. **Save preferences** — Model, prompt, and output type choices are stored for the next session.
 
 ## Command-line mode
 
@@ -62,6 +68,8 @@ py .\process.py --source-type url --input "https://example.com"
 ```
 
 Output formats generated depend on the saved Output Types selection.
+
+The summary report artifacts are always generated automatically and are not part of Output Types selection.
 
 ## Prompts
 
@@ -110,3 +118,10 @@ All selected formats are generated from a **single LLM pass** — no extra API c
 - **MHTML/PDF conversion fails** — Requires Microsoft Word and `pywin32`. Run `pip install pywin32` and ensure Word is installed.
 - **No model available** — Check that your LLM provider (Ollama, LM Studio, or Azure) is reachable and configured. See [webapp.md](webapp.md#provider-environment-variables) for Azure setup.
 - **Wizard does not start** — Check `process.py` for syntax errors.
+- **Web UI should run after reboot without a terminal** — Install the Windows service with `Register-WebService.ps1 -Action Install` as described in [webapp.md](webapp.md#windows-service-deployment).
+
+## Running on a remote server
+
+The CLI wizard is still local and interactive, but the processing stack can run on another host. For remote execution, wrap the processing entrypoint with the debug helper so failures can be sent back here as structured bundles.
+
+See [remote_debugging.md](remote_debugging.md) for the collector, upload endpoint, and analysis workflow.

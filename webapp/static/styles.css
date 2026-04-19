@@ -368,14 +368,41 @@ textarea {
 }
 
 .selectable-files-list {
-  max-height: 140px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  width: 100%;
 }
 
-.selectable-file-item span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.selectable-file-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  width: 100%;
+}
+
+.selectable-file-item input {
+  grid-row: 1 / span 2;
+  margin-top: 2px;
+}
+
+.selectable-file-item .selectable-file-name {
+  grid-column: 2;
+  display: block;
+  color: var(--ink);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.selectable-file-item .selectable-file-meta {
+  grid-column: 2;
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .checkbox-grid {

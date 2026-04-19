@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
@@ -38,15 +39,20 @@ from toolkit.web_jobs import (
     job_manager,
     tail_text_file,
 )
+from toolkit.debug_collector import DebugCollector
 
 APP_TITLE = "Document Correction Toolkit"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 STATIC_DIR = WORKSPACE_DIR / "webapp" / "static"
 INPUT_DIR = WORKSPACE_DIR / "input"
 OUTPUT_DIR = WORKSPACE_DIR / "output"
+HIDDEN_OUTPUT_FILENAMES = {"summary_report_state.json"}
 
 app = FastAPI(title=APP_TITLE)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Debug collector for remote diagnostics
+debug_collector = DebugCollector(OUTPUT_DIR)
 
 
 class CreateFolderRequest(BaseModel):
@@ -220,6 +226,8 @@ def list_files(
 
     items = []
     for path in sorted((p for p in target_dir.iterdir() if p.is_file()), key=lambda item: item.stat().st_mtime, reverse=True):
+        if scope == "output" and path.name in HIDDEN_OUTPUT_FILENAMES:
+            continue
         relative_path = path.relative_to(base_dir).as_posix()
         stat = path.stat()
         items.append(
@@ -243,6 +251,8 @@ def list_processable_input_files(folder: str = Query(...)) -> dict:
     if not target_dir.exists() or not target_dir.is_dir():
         return {"files": []}
 
+    last_processed_map = _load_last_processed_map(folder_name)
+
     files = []
     for path in sorted(p for p in target_dir.iterdir() if p.is_file()):
         ext = path.suffix.lower()
@@ -250,7 +260,16 @@ def list_processable_input_files(folder: str = Query(...)) -> dict:
             continue
         if ext in {".docx", ".mhtml"} and "_corrected" in path.name:
             continue
-        files.append(path.name)
+        stat = path.stat()
+        files.append(
+            {
+                "name": path.name,
+                "extension": ext,
+                "sizeBytes": stat.st_size,
+                "modifiedAt": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "lastProcessedAt": last_processed_map.get(path.name),
+            }
+        )
     return {"files": files}
 
 
@@ -273,7 +292,11 @@ def download_directory_zip(
     if not target_dir.exists() or not target_dir.is_dir():
         raise HTTPException(status_code=404, detail="Folder not found")
 
-    files = [path for path in target_dir.iterdir() if path.is_file()]
+    files = [
+        path
+        for path in target_dir.iterdir()
+        if path.is_file() and not (scope == "output" and path.name in HIDDEN_OUTPUT_FILENAMES)
+    ]
     if not files:
         raise HTTPException(status_code=400, detail="No files to archive")
 
@@ -380,6 +403,220 @@ def get_run_state() -> dict:
     return job_manager.get_status()
 
 
+# ============================================================================
+# DEBUG & DIAGNOSTICS ENDPOINTS FOR REMOTE SERVERS
+# ============================================================================
+
+
+@app.post("/api/debug/upload")
+async def upload_debug_bundle(file: UploadFile = File(...)) -> dict:
+    """Accept debug bundle from remote server.
+    
+    Remote servers capture diagnostics and send them here for analysis.
+    Bundles are stored in output/debug_bundles/ for inspection.
+    """
+    try:
+        contents = await file.read()
+        filename = Path(file.filename or "debug_bundle.json").name
+        
+        bundle_path = OUTPUT_DIR / "debug_bundles" / filename
+        bundle_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(bundle_path, "wb") as f:
+            f.write(contents)
+        
+        return {
+            "status": "received",
+            "filename": filename,
+            "size_bytes": len(contents),
+            "stored_at": bundle_path.as_posix(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to save debug bundle: {str(e)}")
+
+
+@app.get("/api/debug/bundles")
+def list_debug_bundles(limit: int = Query(20, ge=1, le=100)) -> dict:
+    """List recent debug bundles from remote servers."""
+    bundles = debug_collector.get_recent_bundles(limit=limit)
+    
+    result = []
+    for bundle_path in bundles:
+        try:
+            with open(bundle_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            result.append({
+                "filename": bundle_path.name,
+                "timestamp": data.get("timestamp"),
+                "job_id": data.get("job_id"),
+                "task_type": data.get("task_type"),
+                "status": data.get("status"),
+                "size_bytes": bundle_path.stat().st_size,
+                "download_url": f"/api/debug/bundles/{bundle_path.name}",
+            })
+        except Exception:
+            pass
+    
+    return {"bundles": result}
+
+
+@app.get("/api/debug/bundles/{bundle_filename}")
+def download_debug_bundle(bundle_filename: str) -> FileResponse:
+    """Download a specific debug bundle for analysis."""
+    bundle_path = (OUTPUT_DIR / "debug_bundles" / bundle_filename).resolve()
+    
+    if not str(bundle_path).startswith(str((OUTPUT_DIR / "debug_bundles").resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    if not bundle_path.exists():
+        raise HTTPException(status_code=404, detail="Bundle not found")
+    
+    return FileResponse(bundle_path, filename=bundle_filename)
+
+
+@app.post("/api/debug/analyze")
+async def analyze_debug_bundle(file: UploadFile = File(...)) -> dict:
+    """Analyze uploaded debug bundle and return insights.
+    
+    This processes a debug bundle and extracts actionable diagnostics
+    that can be used to identify and fix issues on the remote server.
+    """
+    try:
+        contents = await file.read()
+        data = json.loads(contents)
+        
+        # Extract key diagnostic information
+        analysis = {
+            "timestamp": data.get("timestamp"),
+            "job_id": data.get("job_id"),
+            "task_type": data.get("task_type"),
+            "status": data.get("status"),
+            "issues": [],
+            "recommendations": [],
+            "system_health": {},
+        }
+        
+        # System diagnostics
+        sys_snap = data.get("system_snapshot", {})
+        if sys_snap:
+            mem = sys_snap.get("memory_usage", {})
+            if mem.get("percent", 0) > 85:
+                analysis["issues"].append(
+                    f"High memory usage: {mem.get('percent', 0)}% "
+                    f"({mem.get('available_mb', 0):.0f}MB available)"
+                )
+                analysis["recommendations"].append(
+                    "Consider increasing available memory or breaking processing into smaller batches"
+                )
+            
+            disk = sys_snap.get("disk_usage", {})
+            if disk.get("percent", 0) > 90:
+                analysis["issues"].append(
+                    f"Low disk space: {disk.get('percent', 0)}% used, "
+                    f"only {disk.get('free_mb', 0):.0f}MB available"
+                )
+                analysis["recommendations"].append("Free up disk space on remote server")
+            
+            analysis["system_health"] = {
+                "hostname": sys_snap.get("hostname"),
+                "platform": sys_snap.get("platform_info", {}).get("system"),
+                "cpu_usage_percent": sys_snap.get("cpu_usage"),
+                "memory_usage_percent": mem.get("percent"),
+                "disk_usage_percent": disk.get("percent"),
+            }
+        
+        # Error diagnostics
+        error_details = data.get("error_details", {})
+        if error_details:
+            analysis["issues"].append(
+                f"Error: {error_details.get('error_type')} - {error_details.get('error_message')}"
+            )
+            analysis["error_traceback"] = error_details.get("traceback")
+        
+        # Configuration issues
+        runtime_config = data.get("runtime_config", {})
+        if not runtime_config.get("llm_provider"):
+            analysis["issues"].append("LLM provider not configured")
+            analysis["recommendations"].append("Configure LLM_PROVIDER in environment variables")
+        
+        # Log analysis
+        logs = data.get("logs", {})
+        execution_log = logs.get("execution_log", "")
+        if "Connection refused" in execution_log or "Unable to connect" in execution_log:
+            analysis["issues"].append("Failed to connect to LLM provider")
+            analysis["recommendations"].append(
+                "Verify LLM provider is running and accessible at the configured URL"
+            )
+        
+        # Messages
+        messages = data.get("messages", [])
+        if messages:
+            analysis["recent_messages"] = messages[-5:]  # Last 5 messages
+        
+        # Performance
+        perf = data.get("performance_metrics", {})
+        if perf:
+            analysis["performance"] = perf
+        
+        return analysis
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in debug bundle")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@app.get("/api/debug/health-check")
+def debug_health_check() -> dict:
+    """System health check for remote server verification.
+    
+    Remote servers can call this to verify connectivity and baseline diagnostics.
+    """
+    snapshot = debug_collector.capture_system_snapshot()
+    return {
+        "status": "ok",
+        "timestamp": snapshot.timestamp,
+        "hostname": snapshot.hostname,
+        "platform": snapshot.platform_info.get("system"),
+        "python_version": snapshot.python_version.split()[0],
+        "cpu_usage_percent": snapshot.cpu_usage,
+        "memory_usage_percent": snapshot.memory_usage.get("percent"),
+        "disk_usage_percent": snapshot.disk_usage.get("percent"),
+        "api_version": "1.0",
+    }
+
+
+@app.post("/api/debug/test-error")
+def test_error_capture() -> dict:
+    """Test endpoint to verify error capture is working (dev/debug only).
+    
+    This intentionally raises an error and captures diagnostics to verify
+    the debug collector is functioning correctly.
+    """
+    try:
+        # Simulate an error
+        data = {"test": "value"}
+        result = data["missing_key"]  # KeyError
+    except Exception as e:
+        diag = debug_collector.capture_diagnostics(
+            job_id="test-error-capture",
+            task_type="test",
+            status="failed",
+            messages=["Test error capture"],
+            error=e,
+            error_context={"test": "context"},
+        )
+        bundle_path = debug_collector.save_debug_bundle(diag)
+        return {
+            "status": "error_captured",
+            "bundle": bundle_path.name if bundle_path else None,
+            "error_type": type(e).__name__,
+        }
+    
+    return {"status": "no_error"}
+
+
+
 @app.get("/api/provider-status")
 def get_provider_status() -> dict:
     config = hydrate_runtime_config(load_config())
@@ -414,6 +651,36 @@ def _validate_folder_name(name: str) -> str:
     return folder
 
 
+def _load_last_processed_map(folder_name: str) -> dict[str, str]:
+    state_path = OUTPUT_DIR / folder_name / "summary_report_state.json"
+    if not state_path.exists() or not state_path.is_file():
+        return {}
+
+    try:
+        with open(state_path, "r", encoding="utf-8") as file_handle:
+            payload = json.load(file_handle)
+    except Exception:
+        return {}
+
+    runs = payload.get("runs", []) if isinstance(payload, dict) else []
+    if not isinstance(runs, list):
+        return {}
+
+    last_processed: dict[str, str] = {}
+    for run in reversed(runs):
+        timestamp = str(run.get("timestamp", "")).strip()
+        files = run.get("files", [])
+        if not timestamp or not isinstance(files, list):
+            continue
+        for file_entry in files:
+            if not isinstance(file_entry, dict):
+                continue
+            name = str(file_entry.get("name", "")).strip()
+            if name and name not in last_processed:
+                last_processed[name] = timestamp
+    return last_processed
+
+
 def _safe_extract_zip(zip_path: Path, target_dir: Path) -> None:
     target_root = target_dir.resolve()
     with zipfile.ZipFile(zip_path, "r") as archive:
@@ -439,7 +706,11 @@ def _extract_zip_background(zip_path: Path, target_dir: Path) -> None:
         _append_execution_log(f"Extraction failed for {zip_path.name}: {exc}")
 
 
-if __name__ == "__main__":
+def run_web_server(host: str = "127.0.0.1", port: int = 8000, access_log: bool = False) -> None:
     import uvicorn
 
-    uvicorn.run("local_web:app", host="127.0.0.1", port=8000, reload=False, access_log=False)
+    uvicorn.run("local_web:app", host=host, port=port, reload=False, access_log=access_log)
+
+
+if __name__ == "__main__":
+    run_web_server()

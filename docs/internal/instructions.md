@@ -147,3 +147,21 @@ Web queue behavior policy:
 - Running cancellation is best-effort and should be cooperative at safe checkpoints.
 
 If a request is ambiguous, implement the safest minimal version and document assumptions in the commit summary.
+
+---
+
+## Permanent Engineering Maintenance Rules
+
+These rules are permanent and must be applied whenever code is added or altered.
+
+- Remove dead code in touched areas.
+- Eliminate redundant/duplicate logic and keep one canonical implementation.
+- Keep executable logic in Python files and keep Markdown files documentation-only.
+- Maintain logic separation by responsibility (entrypoints thin, shared logic in toolkit modules).
+- Update relevant Markdown documentation in the same change set whenever behavior, flow, config, or APIs change.
+- Documentation refresh targets include:
+  - `readme.md`
+  - `docs/wizard.md`
+  - `docs/webapp.md`
+  - `docs/configuration.md`
+  - `docs/api_contract.md`

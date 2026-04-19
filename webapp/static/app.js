@@ -283,7 +283,28 @@ async function refreshSelectableFiles() {
 
   try {
     const data = await fetchJson(`/api/processable-files?folder=${encodeURIComponent(folder)}`);
-    state.selectableFiles = data.files || [];
+    const rawFiles = Array.isArray(data.files) ? data.files : [];
+    state.selectableFiles = rawFiles
+      .map(item => {
+        if (typeof item === 'string') {
+          return {
+            name: item,
+            sizeBytes: 0,
+            modifiedAt: null,
+            lastProcessedAt: null,
+          };
+        }
+        if (item && typeof item === 'object') {
+          return {
+            name: String(item.name || '').trim(),
+            sizeBytes: Number(item.sizeBytes || 0),
+            modifiedAt: item.modifiedAt || null,
+            lastProcessedAt: item.lastProcessedAt || null,
+          };
+        }
+        return null;
+      })
+      .filter(item => item && item.name);
 
     if (!state.selectableFiles.length) {
       elements.selectableFilesList.innerHTML = '';
@@ -292,12 +313,18 @@ async function refreshSelectableFiles() {
     }
 
     elements.selectableFilesList.innerHTML = state.selectableFiles
-      .map(name => `
+      .map(file => {
+        const name = file.name || '';
+        const size = file.sizeBytes > 0 ? humanSize(file.sizeBytes) : 'Unknown size';
+        const lastProcessed = file.lastProcessedAt ? formatTimestamp(file.lastProcessedAt) : 'Not processed yet';
+        return `
         <label class="checkbox-item selectable-file-item" title="${escapeHtmlAttribute(name)}">
           <input type="checkbox" value="${escapeHtmlAttribute(name)}" checked>
-          <span>${name}</span>
+          <span class="selectable-file-name">${name}</span>
+          <span class="selectable-file-meta">${size} · Last processed: ${lastProcessed}</span>
         </label>
-      `)
+      `;
+      })
       .join('');
     setMessage(elements.selectableFilesNote, `${state.selectableFiles.length} file(s) available.`);
   } catch (error) {

@@ -9,3 +9,4 @@ pywin32
 fastapi
 uvicorn
 python-multipart
+psutil

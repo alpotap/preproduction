@@ -5,6 +5,8 @@ Base URL: http://127.0.0.1:8000
 
 This contract defines stable endpoints for the localhost single-page web app and any future separate frontend.
 
+When hosted as the Windows background service, the endpoint surface is unchanged. Only the hosting mode differs.
+
 ## Conventions
 
 - Content type: JSON unless endpoint returns file content.
@@ -72,6 +74,9 @@ Response fields:
 
 Lists files recursively with metadata.
 
+Notes:
+- For `scope=output`, internal sidecar files (for example `summary_report_state.json`) are intentionally omitted from list results.
+
 Response fields:
 - files[] with:
   - name
@@ -85,6 +90,17 @@ Response fields:
 ### GET /api/download/{scope}/{relative_path}
 
 Downloads a file.
+
+### GET /api/processable-files?folder=<name>
+
+Lists processable files (`.docx`, `.mhtml`, `.pdf`) for one input folder.
+
+Response fields:
+- files[] with:
+  - name
+  - extension
+  - sizeBytes
+  - modifiedAt
 
 ## Job Endpoints
 
@@ -100,9 +116,13 @@ Request body:
 - provider: string | null
 - model: string | null
 - urls: string | null
+- selectedFiles: string[] | null
 
 Response fields:
 - job (job record)
+
+Processing side effects:
+- For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
 
 ### GET /api/jobs
 
@@ -155,6 +175,79 @@ Kind values:
 
 Response fields:
 - content
+
+## Remote Debug Endpoints
+
+These endpoints support collecting diagnostics from a separate remote host and sending them back to this machine for analysis.
+
+### POST /api/debug/upload
+
+Uploads a remote debug bundle as multipart form data.
+
+Multipart field:
+- file
+
+Response fields:
+- status
+- filename
+- size_bytes
+- stored_at
+
+### GET /api/debug/bundles?limit=1..100
+
+Lists recently received debug bundles.
+
+Response fields:
+- bundles[] with:
+  - filename
+  - timestamp
+  - job_id
+  - task_type
+  - status
+  - size_bytes
+  - download_url
+
+### GET /api/debug/bundles/{bundle_filename}
+
+Downloads one stored debug bundle.
+
+### POST /api/debug/analyze
+
+Accepts one uploaded bundle and returns a quick diagnostic summary.
+
+Multipart field:
+- file
+
+Response fields:
+- timestamp
+- job_id
+- task_type
+- status
+- issues[]
+- recommendations[]
+- system_health
+- error_traceback (when present)
+- recent_messages (when present)
+- performance (when present)
+
+### GET /api/debug/health-check
+
+Returns a lightweight health snapshot so a remote host can verify connectivity before sending larger bundles.
+
+Response fields:
+- status
+- timestamp
+- hostname
+- platform
+- python_version
+- cpu_usage_percent
+- memory_usage_percent
+- disk_usage_percent
+- api_version
+
+### POST /api/debug/test-error
+
+Development-only endpoint that creates a synthetic error and writes a local debug bundle to validate the capture pipeline.
 
 ## Service Endpoint
 
