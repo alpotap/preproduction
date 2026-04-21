@@ -23,22 +23,7 @@ from toolkit.providers import (
     create_client,
 )
 
-try:
-    from toolkit.prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation, get_prompt_output_mode
-except (ImportError, ModuleNotFoundError):
-    DEFAULT_PROMPT_KEY = "default"
-    PROMPT_DEFINITIONS = {
-        "default": {
-            "name": "Default",
-            "summary": "General spelling and grammar correction.",
-        }
-    }
-
-    def get_prompt_abbreviation(prompt_key, fallback="GEN"):
-        return fallback
-
-    def get_prompt_output_mode(prompt_key):
-        return "corrections"
+from toolkit.prompts import PROMPT_DEFINITIONS, DEFAULT_PROMPT_KEY, get_prompt_abbreviation, get_prompt_output_mode
 
 try:
     from toolkit.tracked_processor import process_docx_tracked_with_plan

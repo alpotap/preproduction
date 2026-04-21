@@ -8,39 +8,17 @@ from datetime import datetime
 from pathlib import Path
 
 from docx import Document
-from openai import AzureOpenAI, OpenAI
 
 from toolkit.utils import load_config
-
-OLLAMA_PROVIDER = "ollama"
-AZURE_PROVIDER = "azure_openai"
-AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
-
-
-def normalize_provider(provider: str) -> str:
-    provider = (provider or "").strip().lower()
-    if provider in {"azure", "azure_openai", "github"}:
-        return AZURE_PROVIDER
-    if provider in {"azure_ai_foundry", "foundry"}:
-        return AZURE_AI_FOUNDRY_PROVIDER
-    return OLLAMA_PROVIDER
-
-
-def get_azure_settings(config: dict) -> dict:
-    return {
-        "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
-        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
-        "api_version": os.getenv("AZURE_OPENAI_API_VERSION") or config.get("azure_api_version", "2024-10-21"),
-        "deployment_name": config.get("azure_deployment_name", "").strip(),
-    }
-
-
-def get_azure_ai_foundry_settings(config: dict) -> dict:
-    return {
-        "api_key": os.getenv("AZURE_AI_FOUNDRY_API_KEY"),
-        "endpoint": os.getenv("AZURE_AI_FOUNDRY_ENDPOINT"),
-        "model_name": config.get("azure_ai_foundry_model_name", "").strip(),
-    }
+from toolkit.providers import (
+    OLLAMA_PROVIDER,
+    AZURE_PROVIDER,
+    AZURE_AI_FOUNDRY_PROVIDER,
+    normalize_provider,
+    get_azure_settings,
+    get_azure_ai_foundry_settings,
+    create_client,
+)
 
 
 def resolve_model_name(config: dict) -> str:
@@ -54,29 +32,6 @@ def resolve_model_name(config: dict) -> str:
         if model_name:
             return model_name
     return config.get("llm_model", "")
-
-
-def create_client(provider: str, config: dict):
-    normalized_provider = normalize_provider(provider)
-    if normalized_provider == AZURE_PROVIDER:
-        azure_settings = get_azure_settings(config)
-        if not azure_settings["api_key"]:
-            raise RuntimeError("Missing AZURE_OPENAI_API_KEY environment variable.")
-        if not azure_settings["endpoint"]:
-            raise RuntimeError("Missing AZURE_OPENAI_ENDPOINT environment variable.")
-        return AzureOpenAI(
-            api_key=azure_settings["api_key"],
-            azure_endpoint=azure_settings["endpoint"],
-            api_version=azure_settings["api_version"],
-        )
-    if normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
-        settings = get_azure_ai_foundry_settings(config)
-        if not settings["api_key"]:
-            raise RuntimeError("Missing AZURE_AI_FOUNDRY_API_KEY environment variable.")
-        if not settings["endpoint"]:
-            raise RuntimeError("Missing AZURE_AI_FOUNDRY_ENDPOINT environment variable.")
-        return OpenAI(api_key=settings["api_key"], base_url=settings["endpoint"].rstrip("/"))
-    return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
 
 def build_llm_prompt(metadata: dict) -> str:

@@ -5,12 +5,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-try:
-    from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY, PROMPT_DEFINITIONS
-except ImportError:
-    PROMPTS = {}
-    DEFAULT_PROMPT_KEY = "default"
-    PROMPT_DEFINITIONS = {}
+from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY, PROMPT_DEFINITIONS
 
 
 RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"

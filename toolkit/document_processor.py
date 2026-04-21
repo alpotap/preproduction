@@ -7,13 +7,7 @@ from docx import Document
 from docx.shared import RGBColor
 from docx.oxml.ns import qn
 from toolkit.llm_service import get_corrections_from_llm, get_text_from_llm
-try:
-    from toolkit.prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
-except (ImportError, ModuleNotFoundError):
-    DEFAULT_PROMPT_KEY = "default"
-
-    def get_prompt_max_input_words(prompt_key, fallback=500):
-        return fallback
+from toolkit.prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
 
 
 def _paragraph_contains_image(paragraph):

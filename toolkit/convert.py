@@ -5,6 +5,8 @@ import sys
 import pythoncom
 import win32com.client as win32
 
+_WD_FORMAT_DOCX = 12  # Word XML Document (.docx)
+
 
 def pdf_to_docx(input_path, output_path=None, visible=False):
     pythoncom.CoInitialize()
@@ -14,15 +16,13 @@ def pdf_to_docx(input_path, output_path=None, visible=False):
         output_path = base + ".docx"
     output_path = os.path.abspath(output_path)
 
-    wdFormatXMLDocument = 12  # .docx
-
     word = win32.DispatchEx("Word.Application")
     word.Visible = visible
     word.DisplayAlerts = 0  # Suppress PDF conversion confirmation dialog
     doc = None
     try:
         doc = word.Documents.Open(input_path, ConfirmConversions=False)
-        doc.SaveAs(output_path, FileFormat=wdFormatXMLDocument)
+        doc.SaveAs(output_path, FileFormat=_WD_FORMAT_DOCX)
         print(f"Saved: {output_path}")
     finally:
         if doc is not None:
@@ -46,16 +46,13 @@ def mhtml_to_docx(input_path, output_path=None, visible=False):
         output_path = base + ".docx"
     output_path = os.path.abspath(output_path)
 
-    # Word constants
-    wdFormatXMLDocument = 12  # .docx
-
     # Use an isolated Word instance so we do not attach to/close user-open Word windows.
     word = win32.DispatchEx("Word.Application")
     word.Visible = visible
     doc = None
     try:
         doc = word.Documents.Open(input_path)
-        doc.SaveAs(output_path, FileFormat=wdFormatXMLDocument)
+        doc.SaveAs(output_path, FileFormat=_WD_FORMAT_DOCX)
         print(f"Saved: {output_path}")
     finally:
         if doc is not None:
