@@ -222,9 +222,9 @@ Return [] if no issues are found.
 Text: {text}""",
     },
     "generate_summary": {
-        "name": "Generate Summary",
+        "name": "Generate Module Summary (Single File)",
         "abbr": "SUM",
-        "prompt_category": "content_generation",
+        "prompt_category": "document_analysis",
         "output_mode": "prepend_text",
         "summary": "Generates a learner-focused completion summary using structured training language and prepends it to the top of the document.",
         "max_input_words": 60000,
@@ -247,7 +247,7 @@ Output only the summary text and the required final line. Do not include JSON, c
 Text: {text}""",
     },
     "generate_course_summary": {
-        "name": "Generate Course Summary",
+        "name": "Full Course Summary (multiple documents)",
         "abbr": "CSM",
         "prompt_category": "multi_document_analysis",
         "output_mode": "course_summary",

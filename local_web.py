@@ -128,7 +128,6 @@ def get_capabilities() -> dict:
             {"key": "copy_editing", "label": "Copy Editing"},
             {"key": "document_analysis", "label": "Document Analysis"},
             {"key": "multi_document_analysis", "label": "Multi-Document Analysis"},
-            {"key": "content_generation", "label": "Content Generation"},
         ],
         "outputTypes": [
             {

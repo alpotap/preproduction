@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- **Generate Course Summary Prompt** — New multi-document analysis prompt for course-level summarization
+- **Full Course Summary Prompt (multiple documents)** — New multi-document analysis prompt for course-level summarization
   - Analyzes all documents in a source folder to generate comprehensive course overview
   - Output structure: Half-page summary with two sections:
     - **Verbal Overview**: Course product description and learning intent (2-3 sentences)
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Output mode: `course_summary` — separate from standard correction and prepend modes
   - Processes all valid `.docx` files in the selected input folder
 
-- **Generate Summary Prompt** — New content generation prompt that creates a module completion summary prepended to the top of the document
+- **Generate Module Summary Prompt (Single File)** — New content generation prompt that creates a module completion summary prepended to the top of the document
   - Integrated into CLI wizard and web app prompt selection
   - Supports plain-text generation workflow (distinct from correction-based prompts)
   - Refined template to match user-provided example voice and structure
@@ -41,7 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- **Generate Course Summary Workflow** — Improved extraction and synthesis strategy for better course overview quality
+- **Full Course Summary Workflow (multiple documents)** — Improved extraction and synthesis strategy for better course overview quality
   - **Problem Solved**: Previously sent raw concatenated text, causing LLM to focus on early documents and miss course-wide patterns
   - **New Approach**: Two-phase workflow with structured extraction followed by cross-module synthesis
   - **Phase 1 - Structure Extraction**: `_extract_document_structure()` method extracts per-document components:
@@ -55,7 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - **Prompt Enhancement**: Template updated to guide synthesis of structured data with explicit instructions on identifying patterns, progression, and learning outcomes
   - **Result**: Course summaries now reflect the entire course scope and coherent learning trajectory
 
-- **Generate Summary Prompt Template** — Refined structure to enforce:
+- **Generate Module Summary Prompt Template** — Refined structure to enforce:
   - Starts with "You have…" opening
   - Coordinated instructional clauses
   - Impact sentence ending pattern
@@ -71,7 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     - Copy Editing: default, grammar_only, paragraph_rewrite
     - Document Analysis: redundancy_analysis, structural_integrity, audience_tone_alignment
     - Multi-Document Analysis: terminology_consistency, cross_reference_validation
-    - Content Generation: generate_summary
+    - Content Generation: generate_summary (Generate Module Summary)
 
 - **MHTML File Cleanup** — Enabled in web job processing
   - `web_jobs.py` now passes `cleanup_source_mhtml=True`
