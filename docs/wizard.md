@@ -39,7 +39,9 @@ For unattended web hosting on Windows, use the separate service installer descri
    - `output/<folder>/summary_report_state.json` (historical execution stats)
    - `output/<folder>/summary_report.docx` (readable report with run and category totals)
 
-10. **Save preferences** — Model, prompt, and output type choices are stored for the next session.
+10. **Save preferences** — Prompt and output type choices are stored for the next session. Azure AI Foundry profile/model values are read from environment variables and are not stored in `readme.md`.
+
+11. **Foundry profile selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified entries such as `gpt-4o-mini [primary]`.
 
 ## Command-line mode
 
@@ -117,7 +119,7 @@ All selected formats are generated from a **single LLM pass** — no extra API c
 - **No processable files found** — Ensure `.docx`, `.mhtml`, or `.pdf` files exist directly in the selected folder (not in subdirectories). Files with `_corrected` in the name are excluded.
 - **MHTML files remain after a web Download + Process job** — Update to the latest code and rerun. New web jobs clean up source `.mhtml` files after successful conversion.
 - **MHTML/PDF conversion fails** — Requires Microsoft Word and `pywin32`. Run `pip install pywin32` and ensure Word is installed.
-- **No model available** — Check that your LLM provider (Ollama, LM Studio, or Azure) is reachable and configured. See [webapp.md](webapp.md#provider-environment-variables) for Azure setup.
+- **No model available** — Check that your LLM provider (Ollama, LM Studio, or Azure AI Foundry) is reachable and configured. For Azure AI Foundry, run `python setup_foundry_env.py` and re-open the app. See [configuration.md](configuration.md).
 - **Azure AI Foundry with gpt-4o-mini fails** — Use endpoint root `https://<resource>.cognitiveservices.azure.com/` (not `/openai/v1`) and set `AZURE_AI_FOUNDRY_API_VERSION` (for example `2025-01-01-preview`).
 - **Wizard does not start** — Check `process.py` for syntax errors.
 - **Web UI should run after reboot without a terminal** — Install the Windows service with `Register-WebService.ps1 -Action Install` as described in [webapp.md](webapp.md#windows-service-deployment).

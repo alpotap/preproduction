@@ -1,97 +1,117 @@
 # Document Correction Toolkit
 
-Corrects Word documents (.docx, .mhtml, .pdf) and web URLs using an LLM, and generates one or more review-ready output formats from each correction pass.
+This repository is a Windows-first document processing tool that:
 
-Each processing run also updates a deterministic summary report from execution statistics (no additional LLM call): `summary_report_state.json` and `summary_report.docx`.
+1. Reads DOCX, MHTML, and PDF files (plus optional URL downloads).
+2. Sends text through an LLM correction workflow.
+3. Produces review-ready outputs (inline, uncommented, track changes, hybrid).
+4. Writes a deterministic summary report from execution stats.
 
-## Requirements
+If you are new here, start with the 5-minute setup below.
 
-- Python 3.9+
-- Microsoft Word (Windows) — required for MHTML and PDF input conversion
-- `pip install -r requirements.txt`
+## Start Here (5 Minutes)
 
-## Getting started
+1. Install dependencies.
 
-**Interactive CLI wizard** — guided session in the terminal:
+```shell
+py -m pip install -r requirements.txt
+```
+
+2. Configure your LLM provider.
+
+```shell
+py setup_foundry_env.py
+```
+
+3. Choose how you want to run the app.
+
+CLI wizard:
 
 ```shell
 py .\process.py
 ```
 
-See [docs/wizard.md](docs/wizard.md) for the full wizard walkthrough, CLI flags, prompt options, and output formats.
-
-**Local web interface** — browser UI with queue, file browser, and logs:
+Web app:
 
 ```shell
 py .\local_web.py
 ```
 
-**Windows background service** — install once, auto-start on reboot:
+4. Put files under an input folder and run a job.
 
-```powershell
-PowerShell -ExecutionPolicy Bypass -File .\Register-WebService.ps1 -Action Install -InstallRequirements
+Example input location:
+
+```text
+input\0123\
 ```
 
-See [docs/webapp.md](docs/webapp.md) for the full web UI guide and restart instructions.
+5. Check results under output.
 
-See [docs/configuration.md](docs/configuration.md) for environment variables and runtime configuration.
+Example output location:
 
-## Folder layout
+```text
+output\0123\
+```
+
+## What Runs What
+
+- [process.py](process.py): interactive CLI entrypoint.
+- [local_web.py](local_web.py): local FastAPI server + web UI.
+- [run_web.bat](run_web.bat): convenience launcher for local web server on Windows.
+- [toolkit/](toolkit): shared core logic used by both CLI and web.
+
+## Providers
+
+Supported providers:
+
+- Ollama
+- LM Studio
+- Azure AI Foundry
+
+Setup details are in [docs/configuration.md](docs/configuration.md).
+
+For Azure AI Foundry on Windows, quickest path is:
+
+```shell
+py setup_foundry_env.py
+```
+
+## Where Files Go
 
 | Path | Purpose |
 |---|---|
 | `input/<folder>/` | Source DOCX, MHTML, PDF files |
+| `input/urls.txt` | Optional URL list for download jobs |
 | `output/<folder>/` | Corrected output files |
-| `output/<folder>/summary_report_state.json` | Historical run/correction statistics sidecar |
-| `output/<folder>/summary_report.docx` | Auto-generated summary report from sidecar state |
+| `output/<folder>/summary_report_state.json` | Historical run/correction stats |
+| `output/<folder>/summary_report.docx` | Auto-generated summary report |
 | `output/performance_log.csv` | Per-run performance metrics |
 | `output/execution.log` | Background job log |
-| `input/urls.txt` | Optional URL list for download jobs |
 
-## Architecture
+## Docs Map
 
-| File | Role |
-|---|---|
-| `process.py` | CLI entry point |
-| `local_web.py` | Localhost FastAPI server |
-| `toolkit/` | Internal processing package used by CLI and web entrypoints |
-| `docs/api_contract.md` | Stable v1 API endpoint reference |
+- [docs/configuration.md](docs/configuration.md): environment and provider setup.
+- [docs/wizard.md](docs/wizard.md): CLI flow, prompts, outputs, troubleshooting.
+- [docs/webapp.md](docs/webapp.md): web app usage and service deployment.
+- [docs/api_contract.md](docs/api_contract.md): API endpoints and payloads.
+- [docs/remote_debugging.md](docs/remote_debugging.md): remote diagnostics workflow.
+- [CONTRIBUTING.md](CONTRIBUTING.md): contribution workflow.
+- [SECURITY.md](SECURITY.md): security reporting.
 
-## LLM providers
+## Runtime Configuration
 
-Supported: Ollama, LM Studio, Azure OpenAI, Azure AI Foundry.
-
-Environment variable setup for all providers: [docs/configuration.md](docs/configuration.md).
-
-## Project docs
-
-- Runtime and environment setup: [docs/configuration.md](docs/configuration.md)
-- Frontend and localhost usage: [docs/webapp.md](docs/webapp.md)
-- Windows service deployment: [docs/webapp.md](docs/webapp.md#windows-service-deployment)
-- CLI wizard and processing flow: [docs/wizard.md](docs/wizard.md)
-- API contract: [docs/api_contract.md](docs/api_contract.md)
-- **Remote debugging** (capture errors from production servers): [docs/remote_debugging.md](docs/remote_debugging.md)
-- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security reporting: [SECURITY.md](SECURITY.md)
-
-## Configuration
-
-This section is read by the tool at runtime. Keep keys and formatting as `Key: value`.
+This section is read at runtime. Keep exact `Key: value` formatting.
 
 Language: en-US
 Input Directory: input
 Output Directory: output
 Highlight Corrections: true
 Add Comments: true
-Active Prompt: default
+Active Prompt: paragraph_rewrite
 LLM Provider: azure_ai_foundry
-LLM Model: gpt-4o-mini
+LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
-Azure API Version: 2025-03-01-preview
-Azure Deployment Name:
-Azure AI Foundry API Version: 2025-01-01-preview
-Azure AI Foundry Model Name: gpt-4o-mini
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: uncommented
+Output Types: inline, uncommented, track_changes, hybrid

@@ -13,10 +13,8 @@ from toolkit.summary_report import summarize_correction_plan, update_summary_rep
 from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
-    AZURE_PROVIDER,
     AZURE_AI_FOUNDRY_PROVIDER,
     normalize_provider,
-    get_azure_settings,
     get_azure_ai_foundry_settings,
     get_lm_studio_settings,
     validate_provider_config,
@@ -56,14 +54,11 @@ def hydrate_runtime_config(config):
     runtime_config["active_prompt"] = normalize_prompt_key(runtime_config.get("active_prompt", DEFAULT_PROMPT_KEY))
     runtime_config["output_types"] = normalize_output_types(runtime_config.get("output_types", DEFAULT_OUTPUT_TYPES))
 
-    if runtime_config["llm_provider"] == AZURE_PROVIDER:
-        azure_settings = get_azure_settings(runtime_config)
-        if azure_settings["deployment_name"]:
-            runtime_config["llm_model"] = azure_settings["deployment_name"]
-    elif runtime_config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER:
+    if runtime_config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER:
+        runtime_config["llm_model"] = ""
         foundry_settings = get_azure_ai_foundry_settings(runtime_config)
-        if foundry_settings["model_name"]:
-            runtime_config["llm_model"] = foundry_settings["model_name"]
+        if foundry_settings["selected_value"]:
+            runtime_config["llm_model"] = foundry_settings["selected_value"]
     elif runtime_config["llm_provider"] == LM_STUDIO_PROVIDER:
         lm_studio_settings = get_lm_studio_settings(runtime_config)
         if lm_studio_settings["model_name"]:

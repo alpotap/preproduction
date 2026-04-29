@@ -1,6 +1,7 @@
 """Applies shared correction plans to DOCX files using Microsoft Word Track Changes."""
 
 import difflib
+import pythoncom
 import win32com.client as win32
 
 from toolkit.document_processor import build_correction_plan
@@ -180,6 +181,7 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
     """Apply a precomputed correction plan to a DOCX using Track Changes and comments."""
     print(f"Loading document with Track Changes mode: {input_path}")
 
+    pythoncom.CoInitialize()
     word = win32.DispatchEx("Word.Application")
     word.Visible = False
     doc = None
@@ -249,6 +251,7 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
             word.Quit()
         except Exception:
             pass
+        pythoncom.CoUninitialize()
 
 
 def process_docx_tracked(input_path, output_path, config, client):

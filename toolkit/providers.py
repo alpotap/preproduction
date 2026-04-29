@@ -5,51 +5,254 @@ from openai import OpenAI, AzureOpenAI
 
 OLLAMA_PROVIDER = "ollama"
 LM_STUDIO_PROVIDER = "lm_studio"
-AZURE_PROVIDER = "azure_openai"
 AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
+DEFAULT_AZURE_AI_FOUNDRY_API_VERSION = "2025-01-01-preview"
+FOUNDRY_DEFAULT_PROFILE = "default"
+FOUNDRY_MODEL_DELIMITER = "::"
+
+
+def _read_env_var(name):
+    """Read env var from process first, then Windows HKCU\\Environment fallback."""
+    value = (os.getenv(name) or "").strip()
+    if value:
+        return value
+    if os.name != "nt":
+        return ""
+    try:
+        import winreg  # type: ignore
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+            reg_value, _ = winreg.QueryValueEx(key, name)
+            return str(reg_value).strip()
+    except Exception:
+        return ""
 
 
 def normalize_provider(provider):
     """Normalize persisted provider labels to supported provider keys."""
     provider = (provider or "").strip().lower()
-    if provider in {"azure", "azure_openai", "github"}:
-        return AZURE_PROVIDER
-    if provider in {"azure_ai_foundry", "foundry"}:
+    if provider.startswith("azure") or provider in {"github", "foundry"}:
         return AZURE_AI_FOUNDRY_PROVIDER
     if provider in {"lm_studio", "lmstudio", "local", "local_lm_studio"}:
         return LM_STUDIO_PROVIDER
     return OLLAMA_PROVIDER
 
 
-def get_azure_settings(config):
-    """Load Azure OpenAI settings from env/config."""
-    return {
-        "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
-        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
-        "api_version": os.getenv("AZURE_OPENAI_API_VERSION") or config.get("azure_api_version", "2024-10-21"),
-        "deployment_name": config.get("azure_deployment_name", "").strip(),
-    }
+def _normalize_profile_id(raw_profile):
+    profile = (raw_profile or "").strip().lower()
+    cleaned = "".join(ch for ch in profile if ch.isalnum() or ch == "_")
+    return cleaned
 
 
-def get_azure_ai_foundry_settings(config):
-    """Load Azure AI Foundry settings from env/config."""
-    raw = config.get("azure_ai_foundry_model_name", "") or ""
-    model_names = [m.strip() for m in raw.split(",") if m.strip()]
+def _parse_profile_ids():
+    raw = _read_env_var("AZURE_AI_FOUNDRY_PROFILE_IDS")
+    return [profile for profile in (_normalize_profile_id(item) for item in raw.split(",")) if profile]
+
+
+def _build_legacy_foundry_profile():
+    api_key = _read_env_var("AZURE_AI_FOUNDRY_API_KEY")
+    endpoint = _read_env_var("AZURE_AI_FOUNDRY_ENDPOINT")
+    api_version = _read_env_var("AZURE_AI_FOUNDRY_API_VERSION") or DEFAULT_AZURE_AI_FOUNDRY_API_VERSION
+    raw_models = _read_env_var("AZURE_AI_FOUNDRY_MODEL_NAME")
+    model_names = [model.strip() for model in raw_models.split(",") if model.strip()]
+    if not any([api_key, endpoint, model_names]):
+        return None
     return {
-        "api_key": os.getenv("AZURE_AI_FOUNDRY_API_KEY"),
-        "endpoint": os.getenv("AZURE_AI_FOUNDRY_ENDPOINT"),
-        "api_version": os.getenv("AZURE_AI_FOUNDRY_API_VERSION") or config.get("azure_ai_foundry_api_version", "2025-01-01-preview"),
-        "model_name": model_names[0] if model_names else "",
+        "profile": FOUNDRY_DEFAULT_PROFILE,
+        "api_key": api_key,
+        "endpoint": endpoint,
+        "api_version": api_version,
         "model_names": model_names,
     }
 
 
+def _build_profile_entry(profile):
+    profile_upper = profile.upper()
+    api_key = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_API_KEY")
+    endpoint = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_ENDPOINT")
+    api_version = (
+        _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_API_VERSION")
+        or DEFAULT_AZURE_AI_FOUNDRY_API_VERSION
+    ).strip()
+    raw_models = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_MODEL_NAME")
+    model_names = [model.strip() for model in raw_models.split(",") if model.strip()]
+    if not api_key or not endpoint or not model_names:
+        return None
+    return {
+        "profile": profile,
+        "api_key": api_key,
+        "endpoint": endpoint,
+        "api_version": api_version,
+        "model_names": model_names,
+    }
+
+
+def parse_foundry_model_value(value):
+    """Return (profile, model_name) when encoded as profile::model; else (None, raw)."""
+    raw = (value or "").strip()
+    if not raw:
+        return None, ""
+    if FOUNDRY_MODEL_DELIMITER not in raw:
+        return None, raw
+    profile, model_name = raw.split(FOUNDRY_MODEL_DELIMITER, 1)
+    return _normalize_profile_id(profile), model_name.strip()
+
+
+def encode_foundry_model_value(profile, model_name):
+    """Encode a Foundry model selector value for UI and config transport."""
+    return f"{profile}{FOUNDRY_MODEL_DELIMITER}{model_name}" if profile else model_name
+
+
+def resolve_model_for_request(provider, configured_model, config):
+    """Resolve the concrete model name to pass to the LLM API."""
+    normalized_provider = normalize_provider(provider)
+    if normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        settings = get_azure_ai_foundry_settings(config)
+        selected_profile, selected_model = parse_foundry_model_value(configured_model)
+        if selected_model:
+            selected_entry = None
+            if selected_profile:
+                selected_entry = next(
+                    (entry for entry in settings.get("entries", []) if entry.get("profile") == selected_profile),
+                    None,
+                )
+            if selected_entry is None and settings.get("entries"):
+                selected_entry = settings["entries"][0]
+            deployment_name = _extract_azure_deployment_from_endpoint(
+                selected_entry.get("endpoint", "") if selected_entry else ""
+            )
+            if deployment_name:
+                return deployment_name
+            return selected_model
+        if selected_profile and settings.get("entries"):
+            for entry in settings["entries"]:
+                if entry["profile"] == selected_profile and entry["model_names"]:
+                    deployment_name = _extract_azure_deployment_from_endpoint(entry.get("endpoint", ""))
+                    if deployment_name:
+                        return deployment_name
+                    return entry["model_names"][0]
+        deployment_name = _extract_azure_deployment_from_endpoint(settings.get("endpoint", ""))
+        if deployment_name:
+            return deployment_name
+        return settings.get("model_name", "")
+    return (configured_model or "").strip()
+
+
+def get_azure_ai_foundry_settings(config):
+    """Load Azure AI Foundry settings from environment variables, including multi-profile entries."""
+    requested_provider = normalize_provider(config.get("llm_provider", ""))
+    requested_profile, requested_model = parse_foundry_model_value(config.get("llm_model", ""))
+
+    configured_profiles = _parse_profile_ids()
+    entries = []
+    for profile in configured_profiles:
+        entry = _build_profile_entry(profile)
+        if entry:
+            entries.append(entry)
+
+    legacy_entry = _build_legacy_foundry_profile()
+    # When explicit profiles are configured, do not append legacy single-profile entry
+    # to avoid duplicate model options in UI dropdowns.
+    if legacy_entry and not configured_profiles:
+        entries.append(legacy_entry)
+
+    selected_entry = None
+    selected_model = ""
+
+    if requested_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        if requested_profile:
+            selected_entry = next((entry for entry in entries if entry["profile"] == requested_profile), None)
+            if selected_entry and requested_model in selected_entry["model_names"]:
+                selected_model = requested_model
+        if selected_entry is None and requested_model:
+            for entry in entries:
+                if requested_model in entry["model_names"]:
+                    selected_entry = entry
+                    selected_model = requested_model
+                    break
+
+    if selected_entry is None and entries:
+        selected_entry = entries[0]
+    if selected_entry and not selected_model:
+        selected_model = selected_entry["model_names"][0] if selected_entry["model_names"] else ""
+
+    model_options = []
+    for entry in entries:
+        for model_name in entry["model_names"]:
+            label_suffix = "" if entry["profile"] == FOUNDRY_DEFAULT_PROFILE else f" [{entry['profile']}]"
+            model_options.append(
+                {
+                    "value": encode_foundry_model_value(entry["profile"], model_name),
+                    "model_name": model_name,
+                    "profile": entry["profile"],
+                    "label": f"{model_name}{label_suffix}",
+                }
+            )
+
+    return {
+        "api_key": selected_entry["api_key"] if selected_entry else "",
+        "endpoint": selected_entry["endpoint"] if selected_entry else "",
+        "api_version": selected_entry["api_version"] if selected_entry else DEFAULT_AZURE_AI_FOUNDRY_API_VERSION,
+        "profile": selected_entry["profile"] if selected_entry else "",
+        "model_name": selected_model,
+        "model_names": selected_entry["model_names"] if selected_entry else [],
+        "model_options": model_options,
+        "entries": entries,
+        "selected_value": encode_foundry_model_value(selected_entry["profile"], selected_model)
+        if selected_entry and selected_model
+        else "",
+    }
+
+
 def _normalize_azure_endpoint(endpoint):
-    """Normalize Azure endpoint for AzureOpenAI client usage."""
-    value = (endpoint or "").strip().rstrip("/")
-    if value.lower().endswith("/openai/v1"):
-        value = value[: -len("/openai/v1")]
-    return value
+    """Normalize an Azure endpoint to scheme+host only.
+
+    Accepts both plain base URLs and full Azure portal endpoint strings that include
+    deployment paths and query strings, e.g.:
+      https://my-resource.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=...
+      https://my-resource.services.ai.azure.com/models/chat/completions?api-version=...
+    All such paths are stripped so only the base URL is returned.
+    """
+    value = (endpoint or "").strip()
+    # Drop query string
+    if "?" in value:
+        value = value[: value.index("?")]
+    value = value.rstrip("/")
+    # Strip known Azure API path prefixes (leftmost match wins)
+    for prefix in ("/openai/deployments", "/openai/v1", "/openai", "/models"):
+        idx = value.lower().find(prefix)
+        if idx != -1:
+            value = value[:idx]
+            break
+    return value.rstrip("/")
+
+
+def _extract_azure_deployment_from_endpoint(endpoint):
+    """Extract deployment name from full Azure OpenAI endpoint paths when present."""
+    value = (endpoint or "").strip()
+    if not value:
+        return ""
+    marker = "/openai/deployments/"
+    lower_value = value.lower()
+    start = lower_value.find(marker)
+    if start == -1:
+        return ""
+    start += len(marker)
+    rest = value[start:]
+    if not rest:
+        return ""
+    # First segment after the deployments marker is the deployment name.
+    return rest.split("/", 1)[0].split("?", 1)[0].strip()
+
+
+def _is_ai_services_endpoint(endpoint):
+    """Return True if the endpoint is an Azure AI Services (serverless) endpoint.
+
+    Azure AI Foundry serverless endpoints use the `services.ai.azure.com` domain and
+    expose a /models inference path rather than the Azure OpenAI /openai/deployments path.
+    """
+    host = (endpoint or "").strip().lower().split("/")[2] if "//" in (endpoint or "") else ""
+    return host.endswith("services.ai.azure.com")
 
 
 def get_lm_studio_settings(config):
@@ -69,14 +272,14 @@ def get_lm_studio_settings(config):
 def validate_provider_config(provider, config):
     """Validate provider-specific configuration before processing."""
     normalized_provider = normalize_provider(provider)
-    if normalized_provider == AZURE_PROVIDER:
-        azure_settings = get_azure_settings(config)
-        if not azure_settings["deployment_name"]:
-            raise RuntimeError("Missing Azure Deployment Name in configuration.")
-    elif normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+    if normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
         foundry_settings = get_azure_ai_foundry_settings(config)
         if not foundry_settings["model_name"]:
-            raise RuntimeError("Missing Azure AI Foundry Model Name in configuration.")
+            raise RuntimeError("Missing AZURE_AI_FOUNDRY_MODEL_NAME environment variable.")
+        if not foundry_settings["api_key"]:
+            raise RuntimeError("Missing AZURE_AI_FOUNDRY_API_KEY environment variable.")
+        if not foundry_settings["endpoint"]:
+            raise RuntimeError("Missing AZURE_AI_FOUNDRY_ENDPOINT environment variable.")
     elif normalized_provider == LM_STUDIO_PROVIDER and not config.get("llm_model", "").strip():
         raise RuntimeError("Missing LM Studio model selection. Choose a model from the wizard.")
 
@@ -84,25 +287,22 @@ def validate_provider_config(provider, config):
 def create_client(provider, config):
     """Create an LLM client for the selected provider."""
     normalized_provider = normalize_provider(provider)
-    if normalized_provider == AZURE_PROVIDER:
-        azure_settings = get_azure_settings(config)
-        if not azure_settings["api_key"]:
-            raise RuntimeError("Missing AZURE_OPENAI_API_KEY environment variable.")
-        if not azure_settings["endpoint"]:
-            raise RuntimeError("Missing AZURE_OPENAI_ENDPOINT environment variable.")
-
-        return AzureOpenAI(
-            api_key=azure_settings["api_key"],
-            azure_endpoint=azure_settings["endpoint"],
-            api_version=azure_settings["api_version"],
-        )
-
     if normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
         foundry_settings = get_azure_ai_foundry_settings(config)
         if not foundry_settings["api_key"]:
             raise RuntimeError("Missing AZURE_AI_FOUNDRY_API_KEY environment variable.")
         if not foundry_settings["endpoint"]:
             raise RuntimeError("Missing AZURE_AI_FOUNDRY_ENDPOINT environment variable.")
+
+        if _is_ai_services_endpoint(foundry_settings["endpoint"]):
+            # Azure AI Services (serverless) endpoints use /models inference path — use OpenAI client.
+            base = _normalize_azure_endpoint(foundry_settings["endpoint"])
+            return OpenAI(
+                api_key=foundry_settings["api_key"],
+                base_url=f"{base}/models",
+                default_headers={"api-key": foundry_settings["api_key"]},
+                default_query={"api-version": foundry_settings["api_version"]},
+            )
 
         return AzureOpenAI(
             api_key=foundry_settings["api_key"],
@@ -147,9 +347,10 @@ def fetch_lm_studio_models(config):
 def format_model_label(model_name, provider):
     """Return a user-friendly model label including provider."""
     normalized_provider = normalize_provider(provider)
-    if normalized_provider == AZURE_PROVIDER:
-        provider_label = "Azure OpenAI"
-    elif normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+    if normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
+        profile, resolved_model = parse_foundry_model_value(model_name)
+        if profile and resolved_model:
+            model_name = f"{resolved_model} [{profile}]"
         provider_label = "Azure AI Foundry"
     elif normalized_provider == LM_STUDIO_PROVIDER:
         provider_label = "LM Studio"

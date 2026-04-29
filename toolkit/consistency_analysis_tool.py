@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -12,23 +11,17 @@ from docx import Document
 from toolkit.utils import load_config
 from toolkit.providers import (
     OLLAMA_PROVIDER,
-    AZURE_PROVIDER,
     AZURE_AI_FOUNDRY_PROVIDER,
     normalize_provider,
-    get_azure_settings,
-    get_azure_ai_foundry_settings,
+    resolve_model_for_request,
     create_client,
 )
 
 
 def resolve_model_name(config: dict) -> str:
     provider = normalize_provider(config.get("llm_provider", OLLAMA_PROVIDER))
-    if provider == AZURE_PROVIDER:
-        deployment_name = config.get("azure_deployment_name", "").strip()
-        if deployment_name:
-            return deployment_name
     if provider == AZURE_AI_FOUNDRY_PROVIDER:
-        model_name = config.get("azure_ai_foundry_model_name", "").strip()
+        model_name = resolve_model_for_request(provider, config.get("llm_model", ""), config)
         if model_name:
             return model_name
     return config.get("llm_model", "")
@@ -101,7 +94,7 @@ def run_consistency_analysis(metadata: dict, config: dict) -> dict:
     provider = normalize_provider(config.get("llm_provider", OLLAMA_PROVIDER))
     model_name = resolve_model_name(config)
     if not model_name:
-        raise RuntimeError("No model name configured. Set LLM Model in configuration.")
+        raise RuntimeError("No model name configured. Set provider model via environment variables.")
 
     client = create_client(provider, config)
     prompt = build_llm_prompt(metadata)

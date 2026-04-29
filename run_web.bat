@@ -8,6 +8,20 @@ REM Load Azure AI Foundry environment variables from user profile
 for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_API_KEY 2^>nul') do set "AZURE_AI_FOUNDRY_API_KEY=%%B"
 for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_ENDPOINT 2^>nul') do set "AZURE_AI_FOUNDRY_ENDPOINT=%%B"
 for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_API_VERSION 2^>nul') do set "AZURE_AI_FOUNDRY_API_VERSION=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_MODEL_NAME 2^>nul') do set "AZURE_AI_FOUNDRY_MODEL_NAME=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_PROFILE_IDS 2^>nul') do set "AZURE_AI_FOUNDRY_PROFILE_IDS=%%B"
+
+if defined AZURE_AI_FOUNDRY_PROFILE_IDS (
+	for %%P in (%AZURE_AI_FOUNDRY_PROFILE_IDS:,= %) do (
+		set "FOUND_PROFILE=%%~P"
+		if defined FOUND_PROFILE (
+			for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_!FOUND_PROFILE!_API_KEY 2^>nul') do set "AZURE_AI_FOUNDRY_!FOUND_PROFILE!_API_KEY=%%B"
+			for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_!FOUND_PROFILE!_ENDPOINT 2^>nul') do set "AZURE_AI_FOUNDRY_!FOUND_PROFILE!_ENDPOINT=%%B"
+			for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_!FOUND_PROFILE!_API_VERSION 2^>nul') do set "AZURE_AI_FOUNDRY_!FOUND_PROFILE!_API_VERSION=%%B"
+			for /f "tokens=2*" %%A in ('reg query "HKEY_CURRENT_USER\Environment" /v AZURE_AI_FOUNDRY_!FOUND_PROFILE!_MODEL_NAME 2^>nul') do set "AZURE_AI_FOUNDRY_!FOUND_PROFILE!_MODEL_NAME=%%B"
+		)
+	)
+)
 
 set "PORT=8000"
 set "PIDS="

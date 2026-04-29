@@ -141,7 +141,7 @@ class DebugAnalyzer:
         if not runtime_config.get("llm_provider"):
             analysis["issues"].append("🔴 LLM PROVIDER NOT CONFIGURED")
             analysis["recommendations"].append(
-                "Set LLM_PROVIDER in environment (ollama|lm_studio|azure|azure_ai_foundry)"
+                "Set LLM_PROVIDER in environment (ollama|lm_studio|azure_ai_foundry)"
             )
         else:
             analysis["issues"].append(f"✓ LLM Provider: {runtime_config.get('llm_provider')}")
@@ -153,21 +153,22 @@ class DebugAnalyzer:
         # Provider-specific checks
         provider = runtime_config.get("llm_provider", "").lower()
 
-        if provider == "azure":
-            if not runtime_config.get("azure_api_key"):
-                analysis["issues"].append("🔴 AZURE: Missing API key")
-                analysis["recommendations"].append("Set AZURE_OPENAI_API_KEY")
-            if not runtime_config.get("azure_endpoint"):
-                analysis["issues"].append("🔴 AZURE: Missing endpoint")
-                analysis["recommendations"].append("Set AZURE_OPENAI_ENDPOINT")
-
-        elif provider == "azure_ai_foundry":
+        if provider == "azure_ai_foundry":
             if not runtime_config.get("azure_ai_foundry_api_key"):
                 analysis["issues"].append("🔴 AZURE AI FOUNDRY: Missing API key")
                 analysis["recommendations"].append("Set AZURE_AI_FOUNDRY_API_KEY")
-            if not runtime_config.get("azure_ai_foundry_endpoint"):
+            endpoint = runtime_config.get("azure_ai_foundry_endpoint", "")
+            if not endpoint:
                 analysis["issues"].append("🔴 AZURE AI FOUNDRY: Missing endpoint")
                 analysis["recommendations"].append("Set AZURE_AI_FOUNDRY_ENDPOINT")
+            elif "services.ai.azure.com" not in endpoint and "cognitiveservices.azure.com" not in endpoint:
+                analysis["issues"].append(
+                    f"⚠️  AZURE AI FOUNDRY: Unrecognised endpoint domain in '{endpoint}'. "
+                    "Expected cognitiveservices.azure.com or services.ai.azure.com."
+                )
+                analysis["recommendations"].append(
+                    "Verify AZURE_AI_FOUNDRY_ENDPOINT matches the endpoint shown in Azure AI Foundry portal."
+                )
 
         elif provider == "lm_studio":
             lm_url = runtime_config.get("lm_studio_base_url", "http://127.0.0.1:1234/v1")

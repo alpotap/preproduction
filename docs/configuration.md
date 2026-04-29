@@ -28,13 +28,11 @@ Current keys:
 - LLM Model
 - LM Studio Base URL
 - LM Studio Model Name
-- Azure API Version
-- Azure Deployment Name
-- Azure AI Foundry API Version
-- Azure AI Foundry Model Name
 - LLM Temperature
 - LLM Max Tokens
 - Output Types
+
+Azure AI Foundry provider-specific settings are environment-only and are not read from `readme.md`.
 
 Notes:
 - `Output Types` controls only corrected document formats.
@@ -58,7 +56,6 @@ Supported providers:
 
 - Ollama
 - LM Studio
-- Azure OpenAI
 - Azure AI Foundry
 
 ### Ollama
@@ -76,45 +73,28 @@ Optional override:
 $env:LM_STUDIO_BASE_URL = "http://127.0.0.1:1234/v1"
 ```
 
-### Azure OpenAI
-
-Required:
-
-```powershell
-$env:AZURE_OPENAI_API_KEY = "your-api-key"
-$env:AZURE_OPENAI_ENDPOINT = "https://your-resource.openai.azure.com/"
-```
-
-Optional:
-
-```powershell
-$env:AZURE_OPENAI_API_VERSION = "2024-10-21"
-```
-
-Permanent setup:
-
-```powershell
-setx AZURE_OPENAI_API_KEY "your-api-key"
-setx AZURE_OPENAI_ENDPOINT "https://your-resource.openai.azure.com/"
-setx AZURE_OPENAI_API_VERSION "2024-10-21"
-```
-
-Set `Azure Deployment Name` in [readme.md](../readme.md) to the deployment name in your Azure OpenAI resource.
-
 ### Azure AI Foundry
 
-Required:
+Preferred method: interactive setup script.
 
-```powershell
-$env:AZURE_AI_FOUNDRY_API_KEY = "your-foundry-key"
-$env:AZURE_AI_FOUNDRY_ENDPOINT = "https://your-resource.cognitiveservices.azure.com/"
+```bash
+python setup_foundry_env.py
 ```
 
-Optional (recommended for model compatibility):
+If Python launcher is available, this also works:
 
-```powershell
-$env:AZURE_AI_FOUNDRY_API_VERSION = "2025-01-01-preview"
+```bash
+py setup_foundry_env.py
 ```
+
+The script asks for only 4 values per AI entry:
+
+1. Name
+2. API key
+3. API version (default: `2025-01-01-preview`)
+4. Endpoint
+
+It then writes the full Azure AI Foundry environment variable set for you (including profile variables) and loads the values in the current terminal session.
 
 The API key is found in the Azure AI Foundry portal under your project → **Settings → API keys**.
 
@@ -123,31 +103,41 @@ The endpoint base URL follows the pattern:
 
 Do **not** include a specific deployment path or `api-version` query string in the endpoint — the SDK appends those automatically.
 
-Set `Azure AI Foundry Model Name` in [readme.md](../readme.md) to the model name as shown in your deployment (for example, `gpt-4o-mini`).
-Set `Azure AI Foundry API Version` in [readme.md](../readme.md) if you need to override the default.
+## Advanced manual setup (optional)
 
-Permanent setup:
+Use this only when you need explicit variable control.
 
 ```powershell
-setx AZURE_AI_FOUNDRY_API_KEY "your-foundry-key"
-setx AZURE_AI_FOUNDRY_ENDPOINT "https://your-resource.cognitiveservices.azure.com/"
-setx AZURE_AI_FOUNDRY_API_VERSION "2025-01-01-preview"
+$env:AZURE_AI_FOUNDRY_PROFILE_IDS = "primary,secondary"
+
+$env:AZURE_AI_FOUNDRY_PRIMARY_API_KEY = "<key-1>"
+$env:AZURE_AI_FOUNDRY_PRIMARY_ENDPOINT = "https://resource-one.cognitiveservices.azure.com/"
+$env:AZURE_AI_FOUNDRY_PRIMARY_MODEL_NAME = "gpt-4o-mini"
+$env:AZURE_AI_FOUNDRY_PRIMARY_API_VERSION = "2025-01-01-preview"
+
+$env:AZURE_AI_FOUNDRY_SECONDARY_API_KEY = "<key-2>"
+$env:AZURE_AI_FOUNDRY_SECONDARY_ENDPOINT = "https://resource-two.cognitiveservices.azure.com/"
+$env:AZURE_AI_FOUNDRY_SECONDARY_MODEL_NAME = "gpt-4.1-mini"
+$env:AZURE_AI_FOUNDRY_SECONDARY_API_VERSION = "2025-01-01-preview"
 ```
 
-After running `setx`, close and reopen any terminal window for the values to take effect.
+For profile IDs, use letters, numbers, and underscore only.
 
 ## Verify environment variables
 
 ```powershell
-echo $env:LM_STUDIO_BASE_URL
-echo $env:AZURE_OPENAI_API_KEY
-echo $env:AZURE_OPENAI_ENDPOINT
-echo $env:AZURE_AI_FOUNDRY_API_KEY
-echo $env:AZURE_AI_FOUNDRY_ENDPOINT
-echo $env:AZURE_AI_FOUNDRY_API_VERSION
+$profiles = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_PROFILE_IDS", "User")
+Write-Host "Profiles: $profiles"
+
+foreach ($p in ($profiles -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+    $up = $p.ToUpperInvariant()
+    $endpoint = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_ENDPOINT", "User")
+    $model = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_MODEL_NAME", "User")
+    Write-Host ("{0} => model={1}; endpoint={2}" -f $p, $model, $endpoint)
+}
 ```
 
-If values are missing after `setx`, restart the terminal session.
+If values are missing, run `python setup_foundry_env.py` again.
 
 ## Remote host notes
 

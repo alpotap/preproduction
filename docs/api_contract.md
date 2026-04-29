@@ -31,17 +31,22 @@ Response fields:
 
 ### GET /api/models?provider=<provider_key>
 
-Returns model IDs for a provider.
+Returns model options for a provider.
 
 Response fields:
-- models[]
+- models[] where each item is one of:
+  - string model ID (Ollama/LM Studio)
+  - object `{ value, label, model_name, profile }` (Azure AI Foundry)
 
 ### GET /api/provider-status
 
 Returns provider connectivity/config snapshots.
 
 Notes:
-- For `azureAiFoundry`, endpoint should be configured as `https://<resource>.cognitiveservices.azure.com/` and API version can be controlled with `AZURE_AI_FOUNDRY_API_VERSION` or `Azure AI Foundry API Version` in `readme.md`.
+- For `azureAiFoundry`, endpoint/model settings are environment-only.
+- Recommended setup on Windows uses `python setup_foundry_env.py`, which prompts for 4 values per AI entry and writes the required environment variables.
+- Single-profile mode uses `AZURE_AI_FOUNDRY_API_KEY`, `AZURE_AI_FOUNDRY_ENDPOINT`, `AZURE_AI_FOUNDRY_API_VERSION`, `AZURE_AI_FOUNDRY_MODEL_NAME`.
+- Multi-profile mode uses `AZURE_AI_FOUNDRY_PROFILE_IDS` and per-profile variables (`AZURE_AI_FOUNDRY_<PROFILE>_API_KEY`, `_ENDPOINT`, `_API_VERSION`, `_MODEL_NAME`).
 
 ## Folder and File Endpoints
 

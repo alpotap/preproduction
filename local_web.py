@@ -23,11 +23,9 @@ from toolkit.output_types import OUTPUT_TYPE_REGISTRY, normalize_output_types, s
 from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
-    AZURE_PROVIDER,
     AZURE_AI_FOUNDRY_PROVIDER,
     fetch_ollama_models,
     fetch_lm_studio_models,
-    get_azure_settings,
     get_azure_ai_foundry_settings,
     get_lm_studio_settings,
 )
@@ -140,7 +138,6 @@ def get_capabilities() -> dict:
         "providers": [
             {"key": OLLAMA_PROVIDER, "label": "Ollama"},
             {"key": LM_STUDIO_PROVIDER, "label": "LM Studio"},
-            {"key": AZURE_PROVIDER, "label": "Azure OpenAI"},
             {"key": AZURE_AI_FOUNDRY_PROVIDER, "label": "Azure AI Foundry"},
         ],
     }
@@ -154,11 +151,8 @@ def get_models(provider: str = Query(...)) -> dict:
         models = fetch_ollama_models()
     elif provider == LM_STUDIO_PROVIDER:
         models = fetch_lm_studio_models(config)
-    elif provider == AZURE_PROVIDER:
-        deployment_name = get_azure_settings(config).get("deployment_name")
-        models = [deployment_name] if deployment_name else []
     elif provider == AZURE_AI_FOUNDRY_PROVIDER:
-        models = get_azure_ai_foundry_settings(config).get("model_names", [])
+        models = get_azure_ai_foundry_settings(config).get("model_options", [])
     else:
         raise HTTPException(status_code=400, detail="Unsupported provider")
     return {"models": models}
@@ -349,10 +343,15 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
         config_updates["llm_provider"] = payload.provider
 
     model_value = str(payload.model or "").strip()
+    selected_provider = (payload.provider or "").strip().lower()
     if model_value:
-        config_updates["llm_model"] = model_value
-        if payload.provider == LM_STUDIO_PROVIDER:
-            config_updates["lm_studio_model_name"] = model_value
+        if selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
+            # Azure model/deployment is environment-only and must not be persisted.
+            config_updates["llm_model"] = ""
+        else:
+            config_updates["llm_model"] = model_value
+            if selected_provider == LM_STUDIO_PROVIDER:
+                config_updates["lm_studio_model_name"] = model_value
 
     save_config(config_updates)
 
@@ -625,14 +624,18 @@ def test_error_capture() -> dict:
 @app.get("/api/provider-status")
 def get_provider_status() -> dict:
     config = hydrate_runtime_config(load_config())
+    foundry_settings = get_azure_ai_foundry_settings(config)
     return {
         "ollama": {"models": fetch_ollama_models()},
         "lmStudio": {
             "baseUrl": get_lm_studio_settings(config).get("base_url"),
             "models": fetch_lm_studio_models(config),
         },
-        "azureOpenAI": {"deploymentName": get_azure_settings(config).get("deployment_name")},
-        "azureAiFoundry": {"modelName": get_azure_ai_foundry_settings(config).get("model_name")},
+        "azureAiFoundry": {
+            "modelName": foundry_settings.get("model_name"),
+            "profile": foundry_settings.get("profile"),
+            "profiles": [entry.get("profile") for entry in foundry_settings.get("entries", [])],
+        },
     }
 
 

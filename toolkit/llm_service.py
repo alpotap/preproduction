@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY, PROMPT_DEFINITIONS
+from toolkit.providers import resolve_model_for_request
 
 
 RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"
@@ -44,11 +45,16 @@ def get_corrections_from_llm(text, config, client):
     prompt = prompt_template.format(language=config['language'], text=text)
 
     max_retries = 3
+    resolved_model = resolve_model_for_request(config.get('llm_provider', ''), config.get('llm_model', ''), config)
     for attempt in range(max_retries):
+        prompt_tokens = 0
+        completion_tokens = 0
+        llm_time = 0
+        content = ""
         llm_start_time = time.time()
         try:
             response = client.chat.completions.create(
-                model=config['llm_model'],
+                model=resolved_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=config['llm_temperature'],
                 max_tokens=config['llm_max_tokens']
@@ -57,7 +63,7 @@ def get_corrections_from_llm(text, config, client):
             prompt_tokens = response.usage.prompt_tokens if response.usage else 0
             completion_tokens = response.usage.completion_tokens if response.usage else 0
             content = response.choices[0].message.content.strip()
-            _append_raw_llm_output(config.get('llm_model', ''), prompt_key, content)
+            _append_raw_llm_output(resolved_model, prompt_key, content)
 
             # More robustly find JSON, even if it's embedded in conversation
             json_str_to_decode = ""
@@ -84,10 +90,17 @@ def get_corrections_from_llm(text, config, client):
             return result, prompt_tokens, completion_tokens, llm_time
 
         except (ValueError, json.JSONDecodeError) as e:
+            if not content:
+                # A ValueError can come from the API client before response content exists.
+                print(f"  [!] Error calling LLM API (Attempt {attempt+1}/{max_retries}): {e}")
+                if attempt == max_retries - 1:
+                    return [], 0, 0, llm_time
+                continue
+
             print(f"  [!] JSON parsing failed (Attempt {attempt+1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
                 print(f"  -> Raw response preview: {content[:500]}...")
-                return [], prompt_tokens if 'prompt_tokens' in locals() else 0, completion_tokens if 'completion_tokens' in locals() else 0, llm_time
+                return [], prompt_tokens, completion_tokens, llm_time
         except Exception as e:
             llm_time = time.time() - llm_start_time
             print(f"  [!] Error calling LLM API (Attempt {attempt+1}/{max_retries}): {e}")
@@ -110,8 +123,9 @@ def get_text_from_llm(text, config, client):
 
     llm_start_time = time.time()
     try:
+        resolved_model = resolve_model_for_request(config.get('llm_provider', ''), config.get('llm_model', ''), config)
         response = client.chat.completions.create(
-            model=config['llm_model'],
+            model=resolved_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=config['llm_temperature'],
             max_tokens=max_tokens,
@@ -120,7 +134,7 @@ def get_text_from_llm(text, config, client):
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
         content = response.choices[0].message.content.strip()
-        _append_raw_llm_output(config.get('llm_model', ''), prompt_key, content)
+        _append_raw_llm_output(resolved_model, prompt_key, content)
         return content, input_tokens, output_tokens, llm_time
     except Exception as e:
         llm_time = time.time() - llm_start_time

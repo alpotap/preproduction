@@ -210,12 +210,27 @@ async function loadModels(preferredModel = null) {
     || state.capabilities?.config?.llmModel
     || '';
   const data = await fetchJson(`/api/models?provider=${encodeURIComponent(provider)}`);
-  const models = data.models || [];
+  const rawModels = data.models || [];
+  const models = rawModels
+    .map(model => {
+      if (typeof model === 'string') {
+        return { value: model, label: model };
+      }
+      if (model && typeof model === 'object') {
+        const value = String(model.value || '').trim();
+        if (!value) return null;
+        const label = String(model.label || value);
+        return { value, label };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
   elements.modelSelect.innerHTML = models.length
-    ? models.map(model => `<option value="${model}">${model}</option>`).join('')
+    ? models.map(model => `<option value="${model.value}">${model.label}</option>`).join('')
     : '<option value="">Use current default</option>';
 
-  if (fallbackModel && models.includes(fallbackModel)) {
+  if (fallbackModel && models.some(model => model.value === fallbackModel)) {
     elements.modelSelect.value = fallbackModel;
   }
 }

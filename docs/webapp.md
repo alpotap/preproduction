@@ -134,10 +134,18 @@ For Download + Process jobs, `.mhtml` sources are cleaned up after successful co
 ## Configuration and environment setup
 
 All provider variables, runtime keys, and environment setup are documented in [configuration.md](configuration.md).
+For Azure AI Foundry, profile/model settings are environment-only and are not persisted in `readme.md`.
+
+Recommended setup order:
+
+1. Run `python setup_foundry_env.py` (or configure provider environment variables in [configuration.md](configuration.md)).
+2. Restart the web server.
+3. Open Wizard → Advanced Options and confirm model entries appear.
+4. If using multiple Foundry profiles, select the profile-qualified model entry before queueing a job.
 
 ## Web UI troubleshooting
 
-- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure env vars are set.
+- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Re-run `python setup_foundry_env.py` to regenerate profile variables quickly.
 - **Azure AI Foundry model calls fail for gpt-4o-mini** — Set `AZURE_AI_FOUNDRY_ENDPOINT` to `https://<resource>.cognitiveservices.azure.com/` and set `AZURE_AI_FOUNDRY_API_VERSION` to a compatible preview (for example `2025-01-01-preview`).
 - **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.

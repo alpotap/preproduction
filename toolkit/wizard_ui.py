@@ -7,10 +7,8 @@ from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, nor
 from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
-    AZURE_PROVIDER,
     AZURE_AI_FOUNDRY_PROVIDER,
     normalize_provider,
-    get_azure_settings,
     get_azure_ai_foundry_settings,
     get_lm_studio_settings,
     fetch_ollama_models,
@@ -90,13 +88,13 @@ def select_model(default_model, default_provider, config):
     options = [(OLLAMA_PROVIDER, model_name) for model_name in ollama_models]
     options.extend((LM_STUDIO_PROVIDER, model_name) for model_name in lm_studio_models)
 
-    azure_settings = get_azure_settings(config)
-    if azure_settings["deployment_name"]:
-        options.append((AZURE_PROVIDER, azure_settings["deployment_name"]))
-
     foundry_settings = get_azure_ai_foundry_settings(config)
-    for foundry_model in foundry_settings["model_names"]:
-        options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_model))
+    foundry_label_map = {
+        item["value"]: item.get("label", item["value"])
+        for item in foundry_settings["model_options"]
+    }
+    for foundry_model in foundry_settings["model_options"]:
+        options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_model["value"]))
 
     lm_studio_settings = get_lm_studio_settings(config)
     if lm_studio_models:
@@ -104,10 +102,10 @@ def select_model(default_model, default_provider, config):
     else:
         print(f"LM Studio unavailable or has no loaded model at {lm_studio_settings['base_url']}.")
 
-    if not ollama_models and not lm_studio_models and not azure_settings["deployment_name"] and not foundry_settings["model_names"]:
-        print("No models found. Ensure Ollama/LM Studio is running and/or configure Azure provider.")
+    if not ollama_models and not lm_studio_models and not foundry_settings["model_options"]:
+        print("No models found. Ensure Ollama/LM Studio is running and/or configure Azure AI Foundry provider.")
     elif not ollama_models and not lm_studio_models:
-        print("No models found in local providers (Ollama/LM Studio). Azure providers are available if configured.")
+        print("No models found in local providers (Ollama/LM Studio). Azure AI Foundry is available if configured.")
 
     try:
         print("\n--- Model Selection ---")
@@ -115,15 +113,16 @@ def select_model(default_model, default_provider, config):
         default_index = -1
         normalized_default_provider = normalize_provider(default_provider)
         for index, (provider, model_name) in enumerate(options):
-            if provider == AZURE_PROVIDER:
-                provider_label = "Azure OpenAI"
-            elif provider == AZURE_AI_FOUNDRY_PROVIDER:
+            if provider == AZURE_AI_FOUNDRY_PROVIDER:
                 provider_label = "Azure AI Foundry"
+                display_model_name = foundry_label_map.get(model_name, model_name)
             elif provider == LM_STUDIO_PROVIDER:
                 provider_label = "LM Studio"
+                display_model_name = model_name
             else:
                 provider_label = "Ollama"
-            label = f"{model_name} ({provider_label})"
+                display_model_name = model_name
+            label = f"{display_model_name} ({provider_label})"
             if model_name == default_model and provider == normalized_default_provider:
                 print(f"  {index + 1}: {label} (default)")
                 default_index = index
@@ -131,10 +130,9 @@ def select_model(default_model, default_provider, config):
                 print(f"  {index + 1}: {label}")
 
         default_label = default_model
-        if normalized_default_provider == AZURE_PROVIDER:
-            default_label = f"{default_model} (Azure OpenAI)"
-        elif normalized_default_provider == AZURE_AI_FOUNDRY_PROVIDER:
-            default_label = f"{default_model} (Azure AI Foundry)"
+        if normalized_default_provider == AZURE_AI_FOUNDRY_PROVIDER:
+            default_display = foundry_label_map.get(default_model, default_model)
+            default_label = f"{default_display} (Azure AI Foundry)"
         elif normalized_default_provider == LM_STUDIO_PROVIDER:
             default_label = f"{default_model} (LM Studio)"
         elif default_model:
@@ -313,9 +311,7 @@ def run_interactive_wizard():
 
             config["llm_provider"] = selected_provider
             config["llm_model"] = selected_model
-            if config["llm_provider"] == AZURE_PROVIDER:
-                config["llm_model"] = get_azure_settings(config)["deployment_name"] or selected_model
-            elif config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER:
+            if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER:
                 config["llm_model"] = selected_model
             elif config["llm_provider"] == LM_STUDIO_PROVIDER:
                 config["llm_model"] = selected_model
@@ -327,7 +323,7 @@ def run_interactive_wizard():
                     client.models.list()
                 save_config({
                     "llm_provider": config["llm_provider"],
-                    "llm_model": config["llm_model"],
+                    "llm_model": "" if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER else config["llm_model"],
                     "lm_studio_model_name": config.get("lm_studio_model_name", ""),
                     "active_prompt": config["active_prompt"],
                 })
@@ -336,10 +332,8 @@ def run_interactive_wizard():
                 config["llm_provider"] = previous_provider
                 config["llm_model"] = previous_model
                 print(f"\nError: Could not initialize {selected_provider} client: {e}")
-                if selected_provider == AZURE_PROVIDER:
-                    print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
-                elif selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
-                    print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+                if selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
+                    print("Set AZURE_AI_FOUNDRY_API_KEY, AZURE_AI_FOUNDRY_ENDPOINT, and AZURE_AI_FOUNDRY_MODEL_NAME.")
                 elif selected_provider == LM_STUDIO_PROVIDER:
                     print("Ensure LM Studio local server is running and at least one model is loaded.")
                 else:
@@ -365,10 +359,8 @@ def run_interactive_wizard():
     except Exception as e:
         provider = config["llm_provider"]
         print(f"\nError: Could not initialize {provider} client: {e}")
-        if provider == AZURE_PROVIDER:
-            print("Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT, and configure Azure Deployment Name.")
-        elif provider == AZURE_AI_FOUNDRY_PROVIDER:
-            print("Set AZURE_AI_FOUNDRY_API_KEY and AZURE_AI_FOUNDRY_ENDPOINT, and configure Azure AI Foundry Model Name.")
+        if provider == AZURE_AI_FOUNDRY_PROVIDER:
+            print("Set AZURE_AI_FOUNDRY_API_KEY, AZURE_AI_FOUNDRY_ENDPOINT, and AZURE_AI_FOUNDRY_MODEL_NAME.")
         elif provider == LM_STUDIO_PROVIDER:
             print("Ensure LM Studio local server is running and at least one model is loaded.")
         else:
@@ -401,7 +393,7 @@ def run_interactive_wizard():
     print(f"Using prompt: {selected_prompt.get('name', config['active_prompt'])} [{config['active_prompt']}]")
     save_config({
         "llm_provider": config["llm_provider"],
-        "llm_model": config["llm_model"],
+        "llm_model": "" if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER else config["llm_model"],
         "lm_studio_model_name": config.get("lm_studio_model_name", ""),
         "active_prompt": config["active_prompt"],
         "output_types": serialize_output_types(config["output_types"]),
@@ -434,7 +426,7 @@ def run_interactive_wizard():
     print("\nSaving choices for next run...")
     save_config({
         "llm_provider": config["llm_provider"],
-        "llm_model": config["llm_model"],
+        "llm_model": "" if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER else config["llm_model"],
         "active_prompt": config["active_prompt"],
         "output_types": serialize_output_types(config["output_types"]),
     })
