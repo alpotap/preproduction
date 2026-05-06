@@ -95,6 +95,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **Punctuation Reliability In Full Copy Edit** — Prevented terminal punctuation regressions and under-counted list-item punctuation fixes
+  - Fixed malformed `default` prompt template line concatenation so bullet instructions and strict constraints are parsed as separate lines
+  - Added stronger constraint language to preserve sentence/list-item terminal punctuation unless a true grammar rewrite is required
+  - Added correction post-processing guard in `llm_service.py` to drop terminal punctuation downgrades from `. ? !` to `,`
+  - Added deterministic augmentation for repeated missing terminal periods in bullet/option lists when the pattern is detected, so each affected item is captured
+
 - **File Selector Empty List** — Added explanatory message for non-"Process Existing Files" task types
   - Confirmed API returns correct file counts for valid folders
 
