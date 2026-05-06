@@ -1,8 +1,10 @@
 """Shared configuration and path helpers for the toolkit."""
 
 import csv
+import ctypes
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import re
 
@@ -15,6 +17,33 @@ WORKSPACE_ROOT = _workspace_root()
 PATHS_CONFIG_PATH = WORKSPACE_ROOT / 'paths.json'
 DEFAULT_INPUT_DIR = 'input'
 DEFAULT_OUTPUT_DIR = 'output'
+
+
+def set_windows_hidden(path: Path | str, hidden: bool = True) -> bool:
+    """Set or clear the Windows hidden attribute on a file or directory.
+
+    Returns True when the attribute operation succeeds, otherwise False.
+    No-op on non-Windows platforms.
+    """
+    target = Path(path)
+    if not target.exists():
+        return False
+    if os.name != "nt":
+        return False
+
+    FILE_ATTRIBUTE_HIDDEN = 0x2
+    INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+    attrs = ctypes.windll.kernel32.GetFileAttributesW(str(target))
+    if attrs == INVALID_FILE_ATTRIBUTES:
+        return False
+
+    if hidden:
+        new_attrs = attrs | FILE_ATTRIBUTE_HIDDEN
+    else:
+        new_attrs = attrs & ~FILE_ATTRIBUTE_HIDDEN
+
+    return bool(ctypes.windll.kernel32.SetFileAttributesW(str(target), new_attrs))
 
 
 def _normalize_directory_path(raw_value, default_name):
@@ -166,3 +195,4 @@ def log_performance_stats(log_file_path, stats_data):
         writer = csv.writer(f)
         if not file_exists: writer.writerow(header)
         writer.writerow(row)
+    set_windows_hidden(log_file_path, hidden=True)

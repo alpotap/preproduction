@@ -15,6 +15,7 @@ from typing import Any, Optional
 import socket
 
 from toolkit.utils import load_config, get_output_root
+from toolkit.utils import set_windows_hidden
 from toolkit.engine import hydrate_runtime_config
 from toolkit.providers import normalize_provider
 
@@ -78,6 +79,7 @@ class DebugCollector:
         self.output_dir = output_dir or get_output_root()
         self.debug_dir = self.output_dir / "debug_bundles"
         self.debug_dir.mkdir(exist_ok=True, parents=True)
+        set_windows_hidden(self.debug_dir, hidden=True)
 
     def capture_system_snapshot(self) -> SystemSnapshot:
         """Capture current system state."""

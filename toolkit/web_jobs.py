@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 import json
 
-from toolkit.utils import get_input_root, get_output_root, load_config
+from toolkit.utils import get_input_root, get_output_root, load_config, set_windows_hidden
 from toolkit.engine import (
     hydrate_runtime_config,
     initialize_client_for_config,
@@ -30,6 +30,12 @@ EXECUTION_LOG_PATH = OUTPUT_DIR / "execution.log"
 RAW_OUTPUT_LOG_PATH = OUTPUT_DIR / "llm_raw_output.log"
 PERFORMANCE_LOG_PATH = OUTPUT_DIR / "performance_log.csv"
 JOB_HISTORY_PATH = OUTPUT_DIR / "web_job_history.json"
+HIDDEN_OUTPUT_ARTIFACTS = (
+    OUTPUT_DIR / "debug_bundles",
+    EXECUTION_LOG_PATH,
+    PERFORMANCE_LOG_PATH,
+    JOB_HISTORY_PATH,
+)
 
 
 @dataclass
@@ -157,9 +163,16 @@ class JobQueueManager:
         self._current_job_id: str | None = None
         self._canceled_queue_job_ids: set[str] = set()
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        (OUTPUT_DIR / "debug_bundles").mkdir(parents=True, exist_ok=True)
+        self._ensure_hidden_output_artifacts()
         self._restore_state()
         self._worker = threading.Thread(target=self._worker_loop, name="web-job-worker", daemon=True)
         self._worker.start()
+
+    def _ensure_hidden_output_artifacts(self) -> None:
+        for target in HIDDEN_OUTPUT_ARTIFACTS:
+            if target.exists():
+                set_windows_hidden(target, hidden=True)
 
     def enqueue(self, task_type: str, folder: str, options: dict[str, Any]) -> JobRecord:
         job = JobRecord(id=str(uuid.uuid4()), task_type=task_type, folder=folder, options=options)
@@ -245,6 +258,7 @@ class JobQueueManager:
         formatted = f"[{timestamp}] [{job_id}] {line}"
         with open(EXECUTION_LOG_PATH, "a", encoding="utf-8") as log_file:
             log_file.write(formatted + "\n")
+        set_windows_hidden(EXECUTION_LOG_PATH, hidden=True)
         with self._lock:
             job = self._jobs.get(job_id)
             if job:
@@ -407,6 +421,7 @@ class JobQueueManager:
         }
         with open(JOB_HISTORY_PATH, "w", encoding="utf-8") as file_handle:
             json.dump(payload, file_handle, indent=2)
+        set_windows_hidden(JOB_HISTORY_PATH, hidden=True)
 
     def _apply_job_overrides(self, config: dict[str, Any], options: dict[str, Any]) -> None:
         prompt_key = options.get("promptKey")

@@ -4,6 +4,8 @@
 CONSTRAINTS = """
 Strict Constraints:
 • DO NOT rewrite, rephrase, expand, or change meaning.
+• DO NOT change sentence-ending punctuation (periods, question marks, exclamation points) to other punctuation marks like commas.
+• DO NOT alter punctuation in ways that create grammatical errors (comma splices, fragments, etc.).
 • PRESERVE abbreviations, proper nouns, and technical terms (e.g., "/opt", "/usr/bin", "API key", "localhost").
 • NO anthropomorphic language."""
 
