@@ -588,15 +588,33 @@ function switchTab(tabId) {
   });
 }
 
-function downloadCurrentFolderZip() {
+async function generateCurrentFolderZip(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
   const scope = elements.browserScopeSelect.value;
   const folder = elements.browserFolderSelect.value;
   if (!folder) {
     setMessage(elements.jobMessage, 'Select a folder in Files tab first.', true);
     return;
   }
-  const url = `/api/download-zip?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(folder)}`;
-  window.open(url, '_blank', 'noopener');
+  try {
+    const payload = await fetchJson(`/api/download-zip?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(folder)}`);
+
+    // Keep the user anchored in Files and switch to the generated output location.
+    switchTab('filesTab');
+    elements.browserScopeSelect.value = 'output';
+    await loadFolders('output', elements.browserFolderSelect);
+    if (payload.outputFolder && Array.from(elements.browserFolderSelect.options).some(option => option.value === payload.outputFolder)) {
+      elements.browserFolderSelect.value = payload.outputFolder;
+    }
+    await refreshFileBrowser();
+    setMessage(elements.jobMessage, `ZIP generated: ${payload.outputRelativePath}`);
+  } catch (error) {
+    setMessage(elements.jobMessage, error.message, true);
+  }
 }
 
 function bindEvents() {
@@ -625,7 +643,7 @@ function bindEvents() {
   elements.refreshJobsButton.addEventListener('click', refreshJobs);
   elements.refreshLogsButton.addEventListener('click', refreshLogs);
   elements.refreshFilesButton.addEventListener('click', refreshFileBrowser);
-  elements.downloadAllButton.addEventListener('click', downloadCurrentFolderZip);
+  elements.downloadAllButton.addEventListener('click', generateCurrentFolderZip);
 
   ['dragenter', 'dragover'].forEach(eventName => {
     elements.dropZone.addEventListener(eventName, event => {

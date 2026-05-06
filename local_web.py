@@ -9,12 +9,10 @@ from typing import Literal
 from urllib.parse import quote
 import threading
 import zipfile
-import tempfile
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 from toolkit.utils import load_config, save_config
@@ -31,6 +29,8 @@ from toolkit.providers import (
 )
 from toolkit.web_jobs import (
     EXECUTION_LOG_PATH,
+    INPUT_DIR,
+    OUTPUT_DIR,
     RAW_OUTPUT_LOG_PATH,
     PERFORMANCE_LOG_PATH,
     WORKSPACE_DIR,
@@ -42,8 +42,6 @@ from toolkit.debug_collector import DebugCollector
 APP_TITLE = "Document Correction Toolkit"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 STATIC_DIR = WORKSPACE_DIR / "webapp" / "static"
-INPUT_DIR = WORKSPACE_DIR / "input"
-OUTPUT_DIR = WORKSPACE_DIR / "output"
 HIDDEN_OUTPUT_FILENAMES = {"summary_report_state.json"}
 
 app = FastAPI(title=APP_TITLE)
@@ -285,33 +283,45 @@ def download_file(scope: Literal["input", "output"], relative_path: str) -> File
 def download_directory_zip(
     scope: Literal["input", "output"] = Query("input"),
     folder: str | None = Query(None),
-) -> FileResponse:
+) -> dict:
     base_dir = _resolve_scope_root(scope)
-    target_dir = base_dir / folder if folder else base_dir
+    folder_name = _validate_folder_name(folder) if folder is not None else None
+    target_dir = base_dir / folder_name if folder_name else base_dir
     if not target_dir.exists() or not target_dir.is_dir():
         raise HTTPException(status_code=404, detail="Folder not found")
 
-    files = [
-        path
-        for path in target_dir.iterdir()
-        if path.is_file() and not (scope == "output" and path.name in HIDDEN_OUTPUT_FILENAMES)
-    ]
+    files = []
+    for path in target_dir.iterdir():
+        if not path.is_file():
+            continue
+        if scope == "output" and path.name in HIDDEN_OUTPUT_FILENAMES:
+            continue
+        # Avoid self-nesting/recursive growth when archiving output folders.
+        if scope == "output" and path.suffix.lower() == ".zip":
+            continue
+        files.append(path)
     if not files:
         raise HTTPException(status_code=400, detail="No files to archive")
 
-    archive_label = folder or scope
-    with tempfile.NamedTemporaryFile(prefix=f"{archive_label}_", suffix=".zip", delete=False) as temp_file:
-        temp_zip_path = Path(temp_file.name)
+    output_folder = folder_name or "generated"
+    archive_output_dir = OUTPUT_DIR / output_folder
+    archive_output_dir.mkdir(parents=True, exist_ok=True)
+    archive_label = folder_name or scope
+    archive_path = _next_available_archive_path(archive_output_dir, f"{archive_label}_{scope}.zip")
 
-    with zipfile.ZipFile(temp_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for file_path in files:
             archive.write(file_path, arcname=file_path.name)
 
-    return FileResponse(
-        temp_zip_path,
-        filename=f"{archive_label}.zip",
-        background=BackgroundTask(lambda: temp_zip_path.unlink(missing_ok=True)),
-    )
+    relative_path = f"{output_folder}/{archive_path.name}" if output_folder else archive_path.name
+    return {
+        "status": "generated",
+        "scope": scope,
+        "sourceFolder": folder_name or "",
+        "outputFolder": output_folder,
+        "outputFile": archive_path.name,
+        "outputRelativePath": relative_path,
+    }
 
 
 @app.post("/api/jobs")
@@ -697,6 +707,24 @@ def _safe_extract_zip(zip_path: Path, target_dir: Path) -> None:
             if not str(destination).startswith(str(target_root)):
                 raise ValueError(f"Unsafe zip entry: {member.filename}")
         archive.extractall(target_root)
+
+
+def _next_available_archive_path(output_dir: Path, base_filename: str) -> Path:
+    """Return a non-colliding ZIP path using a date-time suffix when needed."""
+    candidate = output_dir / base_filename
+    if not candidate.exists():
+        return candidate
+
+    stem = candidate.stem
+    suffix = candidate.suffix or ".zip"
+    timestamp_suffix = datetime.now().strftime("%B_%d_%Y_%I_%M_%S_%p")
+    version = 1
+    while True:
+        version_token = "" if version == 1 else f"_{version}"
+        versioned = output_dir / f"{stem}_{timestamp_suffix}{version_token}{suffix}"
+        if not versioned.exists():
+            return versioned
+        version += 1
 
 
 def _append_execution_log(message: str) -> None:

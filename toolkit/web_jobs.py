@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 import json
 
-from toolkit.utils import load_config
+from toolkit.utils import get_input_root, get_output_root, load_config
 from toolkit.engine import (
     hydrate_runtime_config,
     initialize_client_for_config,
@@ -24,7 +24,8 @@ from toolkit.engine import (
 from toolkit.web_tools import download_url_as_mhtml
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = WORKSPACE_DIR / "output"
+INPUT_DIR = get_input_root()
+OUTPUT_DIR = get_output_root()
 EXECUTION_LOG_PATH = OUTPUT_DIR / "execution.log"
 RAW_OUTPUT_LOG_PATH = OUTPUT_DIR / "llm_raw_output.log"
 PERFORMANCE_LOG_PATH = OUTPUT_DIR / "performance_log.csv"
@@ -321,9 +322,9 @@ class JobQueueManager:
             folder = job.folder
             options = dict(job.options)
 
-        source_dir = WORKSPACE_DIR / "input" / folder
+        source_dir = INPUT_DIR / folder
         source_dir.mkdir(parents=True, exist_ok=True)
-        output_dir = WORKSPACE_DIR / "output" / folder
+        output_dir = OUTPUT_DIR / folder
         output_dir.mkdir(parents=True, exist_ok=True)
 
         config = hydrate_runtime_config(load_config())
@@ -349,7 +350,7 @@ class JobQueueManager:
             if task_type == "consistency":
                 self.record_line(job_id, f"Running consistency analysis for folder {folder}")
                 self._raise_if_cancel_requested(job_id)
-                result = run_consistency_for_course(source_dir, WORKSPACE_DIR / config["output_dir"], folder, config, WORKSPACE_DIR)
+                result = run_consistency_for_course(source_dir, Path(config["output_dir"]), folder, config, WORKSPACE_DIR)
                 self.record_line(job_id, f"Consistency analysis written to {result['analysis_docx']}")
                 self._set_job_state(job_id, output_count=1)
                 return

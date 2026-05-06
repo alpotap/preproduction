@@ -10,6 +10,8 @@ py .\process.py
 
 The interactive wizard runs in the terminal and guides you through folder selection, uploading, and job processing. No flags are required for normal use.
 
+Input and output roots come from `paths.json`. The wizard can create subfolders under the configured input root, but it cannot change the root paths themselves.
+
 For unattended web hosting on Windows, use the separate service installer described in [webapp.md](webapp.md#windows-service-deployment).
 
 ## Interactive wizard flow
@@ -70,6 +72,8 @@ py .\process.py --source-type url --input "https://example.com"
 ```
 
 Output formats generated depend on the saved Output Types selection.
+
+For URL processing and wizard folder selection, the base input/output roots are taken from `paths.json`.
 
 The summary report artifacts are always generated automatically and are not part of Output Types selection.
 

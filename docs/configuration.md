@@ -4,6 +4,26 @@
 
 This page contains runtime keys, provider configuration, and environment setup.
 
+## Input and output folders
+
+Input and output roots are configured only in `paths.json` at the repository root.
+
+Example:
+
+```json
+{
+    "input_dir": "input",
+    "output_dir": "output"
+}
+```
+
+Rules:
+
+- Relative paths are resolved from the repository root.
+- Absolute paths are allowed.
+- CLI and web use the same file.
+- The wizard and web UI do not offer path editing and do not persist path changes.
+
 ## Remote debugging support
 
 Remote diagnostics do not require extra runtime keys in `readme.md`.
@@ -19,8 +39,6 @@ The tool reads the Configuration section in [readme.md](../readme.md). Keep each
 Current keys:
 
 - Language
-- Input Directory
-- Output Directory
 - Highlight Corrections
 - Add Comments
 - Active Prompt
@@ -36,11 +54,14 @@ Azure AI Foundry provider-specific settings are environment-only and are not rea
 
 Notes:
 - `Output Types` controls only corrected document formats.
+- `Input Directory` and `Output Directory` are no longer read from `readme.md`; use `paths.json` instead.
 - Summary report artifacts (`summary_report_state.json` and `summary_report.docx`) are generated automatically from execution statistics and do not require additional configuration keys.
 
 ## Windows service configuration
 
 When the web UI is installed as a Windows service, startup settings are written to `output/web_service_config.json`.
+
+The `output` portion of that path follows the root configured in `paths.json`.
 
 Current service settings:
 
@@ -152,3 +173,5 @@ If values are missing, run `python setup_foundry_env.py` again.
 - Use `-InstallRequirements` on first install after clone so the service host has all Python packages available.
 - If you bind to `0.0.0.0` for network access, consider adding `-OpenFirewall` during install.
 - Service logs are written to `output/web_service.log` and `output/web_service_error.log`.
+
+Those log paths also follow the output root from `paths.json`.

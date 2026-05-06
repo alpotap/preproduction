@@ -37,7 +37,20 @@ Web app:
 py .\local_web.py
 ```
 
-4. Put files under an input folder and run a job.
+4. Set your shared input/output roots in `paths.json`.
+
+Example:
+
+```json
+{
+	"input_dir": "input",
+	"output_dir": "output"
+}
+```
+
+You can use relative paths (resolved from the repo root) or absolute paths. CLI and web both honor this file. The wizard and web UI do not edit it.
+
+5. Put files under an input folder and run a job.
 
 Example input location:
 
@@ -45,7 +58,7 @@ Example input location:
 input\0123\
 ```
 
-5. Check results under output.
+6. Check results under output.
 
 Example output location:
 
@@ -78,6 +91,8 @@ py setup_foundry_env.py
 
 ## Where Files Go
 
+The input/output roots come from `paths.json`.
+
 | Path | Purpose |
 |---|---|
 | `input/<folder>/` | Source DOCX, MHTML, PDF files |
@@ -103,8 +118,6 @@ py setup_foundry_env.py
 This section is read at runtime. Keep exact `Key: value` formatting.
 
 Language: en-US
-Input Directory: input
-Output Directory: output
 Highlight Corrections: true
 Add Comments: true
 Active Prompt: paragraph_rewrite

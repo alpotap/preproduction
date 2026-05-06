@@ -15,9 +15,11 @@ import win32event
 import win32service
 import win32serviceutil
 
+from toolkit.utils import get_output_root
+
 
 WORKSPACE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = WORKSPACE_DIR / "output"
+OUTPUT_DIR = get_output_root()
 CONFIG_PATH = OUTPUT_DIR / "web_service_config.json"
 LOG_PATH = OUTPUT_DIR / "web_service.log"
 ERROR_LOG_PATH = OUTPUT_DIR / "web_service_error.log"

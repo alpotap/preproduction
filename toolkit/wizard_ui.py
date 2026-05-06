@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from toolkit.utils import load_config, save_config
+from toolkit.utils import format_path_for_display, load_config, save_config
 from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, serialize_output_types, format_output_types
 from toolkit.providers import (
     OLLAMA_PROVIDER,
@@ -28,10 +28,9 @@ from toolkit.engine import (
 )
 
 
-def prompt_course_folder(workspace_dir):
+def prompt_course_folder(input_root):
     """Prompt for a course folder under input/, selecting existing or creating a new one."""
-    input_root = workspace_dir / "input"
-    input_root.mkdir(exist_ok=True)
+    input_root.mkdir(exist_ok=True, parents=True)
 
     folders = sorted([directory.name for directory in input_root.iterdir() if directory.is_dir()])
 
@@ -78,7 +77,7 @@ def show_existing_files_for_course(workspace_dir, source_dir):
 
     print("\nFiles already in selected input folder:")
     for index, file_path in enumerate(existing_files, start=1):
-        print(f"  {index}: {file_path.relative_to(workspace_dir).as_posix()}")
+        print(f"  {index}: {format_path_for_display(file_path, workspace_dir)}")
 
 
 def select_model(default_model, default_provider, config):
@@ -256,13 +255,13 @@ def prompt_level_d_file_selection(workspace_dir, source_dir):
     """Level D file selection: all files or a numeric list."""
     all_files = list_processable_files(source_dir)
     if not all_files:
-        print(f"\nNo processable files (.docx, .mhtml, .pdf) found in '{source_dir.relative_to(workspace_dir).as_posix()}'.")
+        print(f"\nNo processable files (.docx, .mhtml, .pdf) found in '{format_path_for_display(source_dir, workspace_dir)}'.")
         return []
 
     print("\n--- Level D: Select Files ---")
-    print(f"Found the following processable files in '{source_dir.relative_to(workspace_dir).as_posix()}':")
+    print(f"Found the following processable files in '{format_path_for_display(source_dir, workspace_dir)}':")
     for index, file_path in enumerate(all_files, start=1):
-        print(f"  {index}: {file_path.relative_to(workspace_dir).as_posix()}")
+        print(f"  {index}: {format_path_for_display(file_path, workspace_dir)}")
 
     print("\nEnter 'all' to process all files, or enter numbers like '1 2 3'. Press Enter to cancel.")
     selection = input("> ").strip().lower()
@@ -293,6 +292,8 @@ def run_interactive_wizard():
 
     config = hydrate_runtime_config(load_config())
     workspace_dir = Path(__file__).resolve().parent.parent
+    input_root = Path(config["input_dir"])
+    output_root = Path(config["output_dir"])
     run_consistency_only = False
 
     while True:
@@ -368,13 +369,13 @@ def run_interactive_wizard():
         return
 
     print("\n--- Level B: Select Or Create Folder ---")
-    selected_course, source_dir = prompt_course_folder(workspace_dir)
+    selected_course, source_dir = prompt_course_folder(input_root)
     show_existing_files_for_course(workspace_dir, source_dir)
 
     if run_consistency_only:
-        print(f"\nRunning cross-document consistency analysis for '{source_dir.relative_to(workspace_dir).as_posix()}'...")
+        print(f"\nRunning cross-document consistency analysis for '{format_path_for_display(source_dir, workspace_dir)}'...")
         try:
-            results = run_consistency_for_course(source_dir, workspace_dir / config["output_dir"], selected_course, config, workspace_dir)
+            results = run_consistency_for_course(source_dir, output_root, selected_course, config, workspace_dir)
             print("\n--- Consistency Analysis Completed ---")
             print(f"Documents scanned: {results['document_count']}")
             print(f"Metadata JSON: {results['metadata_json']}")
@@ -400,18 +401,18 @@ def run_interactive_wizard():
     })
 
     if run_download:
-        urls_file = workspace_dir / "input" / "urls.txt"
+        urls_file = input_root / "urls.txt"
         if not urls_file.exists():
             print(f"\nCould not find URLs file: {urls_file.as_posix()}")
             return
-        print(f"\nDownloading to '{source_dir.relative_to(workspace_dir).as_posix()}'...")
+        print(f"\nDownloading to '{format_path_for_display(source_dir, workspace_dir)}'...")
         download_urls_to_folder(urls_file, source_dir)
 
     files_to_process = prompt_level_d_file_selection(workspace_dir, source_dir)
     if not files_to_process:
         return
 
-    output_dir = workspace_dir / config["output_dir"] / selected_course
+    output_dir = output_root / selected_course
     output_dir.mkdir(parents=True, exist_ok=True)
 
     process_files(

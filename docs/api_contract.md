@@ -7,6 +7,8 @@ This contract defines stable endpoints for the localhost single-page web app and
 
 When hosted as the Windows background service, the endpoint surface is unchanged. Only the hosting mode differs.
 
+The effective input and output roots behind these endpoints come from `paths.json`. The API does not expose any endpoint to edit those root paths.
+
 ## Conventions
 
 - Content type: JSON unless endpoint returns file content.
@@ -99,6 +101,18 @@ Response fields:
 
 Downloads a file.
 
+### GET /api/download-zip?scope=input|output&folder=<name>
+
+Generates a zip archive from the selected folder and saves it under the output root.
+
+Response fields:
+- status
+- scope
+- sourceFolder
+- outputFolder
+- outputFile
+- outputRelativePath
+
 ### GET /api/processable-files?folder=<name>
 
 Lists processable files (`.docx`, `.mhtml`, `.pdf`) for one input folder.
@@ -131,6 +145,8 @@ Response fields:
 
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
+
+In all path examples above, `input` and `output` refer to the roots defined in `paths.json`.
 
 ### GET /api/jobs
 

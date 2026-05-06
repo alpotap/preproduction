@@ -16,6 +16,8 @@ Or use the batch file:
 
 Then open **http://127.0.0.1:8000** in any browser.
 
+The web app reads its input and output roots from `paths.json`. Those paths are shared with the CLI and are not editable from the web UI.
+
 ## Windows service deployment
 
 If this machine should host the web UI continuously, register it as a Windows service so users do not need to start `local_web.py` manually.
@@ -49,6 +51,8 @@ Service logs are written to:
 - `output/web_service_error.log`
 
 The service host is implemented in `windows_web_service.py` and launches the same FastAPI app as the interactive `local_web.py` entrypoint.
+
+If `paths.json` points `output_dir` somewhere else, the service config, logs, job history, and debug bundles are written under that configured output root instead of the repository-local `output` folder.
 
 ## Restarting the web server
 
@@ -106,7 +110,7 @@ Browse input and output folders:
 - Select scope (Input / Output) and a folder.
 - Files are listed by name with size and modification time.
 - Click **Download** to download a single file.
-- Click **Download Folder ZIP** to download all files in the selected folder as a zip archive.
+- Click **Generate ZIP** to generate a zip archive in the corresponding output folder.
 
 ## Remote debugging
 
@@ -126,6 +130,8 @@ Drop or choose a `.zip` file in the Wizard upload area. The server will:
 1. Save the `.zip` to the input folder (it will be visible in the Files tab).
 2. Extract all contents into the same folder in the background.
 3. Log extraction progress to `output/execution.log`.
+
+All `output/...` examples above are relative to the output root configured in `paths.json`.
 
 ZIP files are not processable by the correction engine — only `.docx`, `.mhtml`, and `.pdf` are picked up.
 
@@ -150,7 +156,7 @@ Recommended setup order:
 - **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.
 - **Job stuck as queued** — Worker thread may have crashed. Restart the server; queued jobs will be restored from history.
-- **Download Folder ZIP returns 400** — No files in the selected folder. Switch scope/folder or upload first.
+- **Generate ZIP returns 400** — No files in the selected folder. Switch scope/folder or upload first.
 - **ZIP extraction not completing** — Check `output/execution.log` for `[zip-extract]` entries to see errors.
 - **Remote host cannot upload a bundle** — Verify port `8000` is reachable from the remote machine and test `/api/debug/health-check` using the developer machine IP, not `127.0.0.1`.
 - **Windows service starts then stops immediately** — Check `output/web_service.log` and `output/web_service_error.log`. The most common causes are missing Python dependencies or port `8000` already being in use.

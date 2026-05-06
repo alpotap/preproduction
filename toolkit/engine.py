@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from toolkit.utils import log_performance_stats
+from toolkit.utils import format_path_for_display, get_input_root, log_performance_stats
 from toolkit.document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan, build_prepend_plan, apply_prepend_plan, build_course_summary_plan, save_course_summary
 from toolkit.web_tools import download_url_as_mhtml
 from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, format_output_types
@@ -116,8 +116,8 @@ def resolve_input_sources(input_value, source_type, workspace_dir):
     source_type_for_processing = source_type
 
     if source_type == "url":
-        mhtml_output_dir = workspace_dir / "input"
-        mhtml_output_dir.mkdir(exist_ok=True)
+        mhtml_output_dir = get_input_root()
+        mhtml_output_dir.mkdir(exist_ok=True, parents=True)
         downloaded_file = download_url_as_mhtml(input_value, mhtml_output_dir)
         if downloaded_file:
             files_to_process.append(downloaded_file)
@@ -141,11 +141,11 @@ def run_consistency_for_course(source_dir, output_dir, selected_course, config, 
     results = run_full_consistency(source_dir, consistency_output_dir, consistency_docx)
     return {
         "document_count": results["document_count"],
-        "metadata_json": Path(results["metadata_json"]).relative_to(workspace_dir).as_posix(),
-        "documents_csv": Path(results["documents_csv"]).relative_to(workspace_dir).as_posix(),
-        "keywords_csv": Path(results["keywords_csv"]).relative_to(workspace_dir).as_posix(),
-        "product_names_csv": Path(results["product_names_csv"]).relative_to(workspace_dir).as_posix(),
-        "analysis_docx": Path(results["analysis_docx"]).relative_to(workspace_dir).as_posix(),
+        "metadata_json": format_path_for_display(Path(results["metadata_json"]), workspace_dir),
+        "documents_csv": format_path_for_display(Path(results["documents_csv"]), workspace_dir),
+        "keywords_csv": format_path_for_display(Path(results["keywords_csv"]), workspace_dir),
+        "product_names_csv": format_path_for_display(Path(results["product_names_csv"]), workspace_dir),
+        "analysis_docx": format_path_for_display(Path(results["analysis_docx"]), workspace_dir),
         "model_used": results["model_used"],
         "provider_used": results["provider_used"],
     }
@@ -166,7 +166,7 @@ def process_files(
         if callable(should_cancel) and should_cancel():
             raise RuntimeError("Canceled by user request")
 
-    output_dir = output_dir or (workspace_dir / config["output_dir"])
+    output_dir = Path(output_dir) if output_dir is not None else Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     mhtml_sources_to_cleanup = []
     selected_output_types = normalize_output_types(config.get("output_types", DEFAULT_OUTPUT_TYPES))
@@ -221,7 +221,7 @@ def process_files(
                 
                 run_files.append({
                     "file": "Course_Summary.docx",
-                    "location": str(summary_output_path.relative_to(workspace_dir)),
+                    "location": format_path_for_display(summary_output_path, workspace_dir),
                     "inputTokens": stats["total_input_tokens"],
                     "tokensGenerated": stats["total_tokens_generated"],
                     "llmTime": stats["total_llm_time"],
@@ -294,7 +294,7 @@ def process_files(
                         pdf_archive_dir.mkdir(exist_ok=True)
                         pdf_destination = pdf_archive_dir / file_path.name
                         file_path.rename(pdf_destination)
-                        print(f"  -> Moved source PDF to: {pdf_destination.relative_to(workspace_dir).as_posix()}")
+                        print(f"  -> Moved source PDF to: {format_path_for_display(pdf_destination, workspace_dir)}")
                     except Exception as e:
                         print(f"  [!] Could not move PDF to archive subdirectory: {e}")
                 except Exception as e:
@@ -411,7 +411,7 @@ def process_files(
                     "total_tokens_generated": total_tokens_generated,
                     "tokens_per_second": tokens_per_second,
                 }
-                log_file = workspace_dir / config["output_dir"] / "performance_log.csv"
+                log_file = Path(config["output_dir"]) / "performance_log.csv"
                 log_performance_stats(log_file, log_data)
                 print(f"  Performance stats logged to: {log_file.name}")
             except Exception as e:
