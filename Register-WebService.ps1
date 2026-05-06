@@ -3,7 +3,8 @@ param(
     [ValidateSet("Install", "Uninstall", "Start", "Stop", "Restart", "Status")]
     [string]$Action = "Install",
 
-    [string]$Host = "127.0.0.1",
+    [Alias("Host")]
+    [string]$BindHost = "127.0.0.1",
 
     [ValidateRange(1, 65535)]
     [int]$Port = 8000,
@@ -22,7 +23,7 @@ $ServiceScript = Join-Path $RepoRoot "windows_web_service.py"
 $OutputDir = Join-Path $RepoRoot "output"
 $ConfigPath = Join-Path $OutputDir "web_service_config.json"
 $ServiceName = "DocumentCorrectionToolkitWeb"
-$ServiceUrl = "http://{0}:{1}" -f $Host, $Port
+$ServiceUrl = "http://{0}:{1}" -f $BindHost, $Port
 
 function Test-IsAdmin {
     $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -65,7 +66,7 @@ function Invoke-Python {
 function Write-ServiceConfig {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
     $config = [ordered]@{
-        host = $Host
+        host = $BindHost
         port = $Port
         access_log = [bool]$EnableAccessLog
     }
@@ -82,7 +83,7 @@ function Configure-FirewallRule {
     if (-not $OpenFirewall) {
         return
     }
-    if ($Host -eq "127.0.0.1" -or $Host -eq "localhost") {
+    if ($BindHost -eq "127.0.0.1" -or $BindHost -eq "localhost") {
         Write-Host "Skipping firewall rule because host is loopback only."
         return
     }
