@@ -64,12 +64,27 @@ Use this when you just need diagnostics quickly.
   cd C:\tools\preproduction
   py -m toolkit.debug_collector
   ```
+   This single command now does both actions:
+   - captures a bundle using the latest run context when available
+   - immediately prints an analysis report for that captured bundle
 3. Copy the bundle from `output/debug_bundles/` to your local machine.
-4. Analyze locally:
+4. Optional: analyze any bundle again later:
   ```powershell
   cd C:\Workfold\Enablement ACTIVE\aitools\preproduction
   py -m toolkit.debug_analyzer latest
   ```
+
+If you only want to capture and skip immediate analysis output:
+
+```powershell
+py -m toolkit.debug_collector --capture-only
+```
+
+If the failing execution used an explicit provider/model override, include the same values when capturing diagnostics so the bundle reflects real runtime settings:
+
+```powershell
+py -m toolkit.debug_collector --job-id post_run --task-type process --status failed --provider azure_ai_foundry --model gpt_4o_mini::gpt-4o-mini
+```
 
 ### Setup (One-time)
 

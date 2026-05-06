@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import platform
 import shutil
 import sys
@@ -13,7 +14,9 @@ from pathlib import Path
 from typing import Any, Optional
 import socket
 
-from toolkit.utils import load_config
+from toolkit.utils import load_config, get_output_root
+from toolkit.engine import hydrate_runtime_config
+from toolkit.providers import normalize_provider
 
 
 @dataclass
@@ -70,9 +73,9 @@ class DebugCollector:
         """Initialize collector.
 
         Args:
-            output_dir: Where to write debug bundles. Defaults to local output/.
+            output_dir: Where to write debug bundles. Defaults to configured output root.
         """
-        self.output_dir = output_dir or Path(__file__).resolve().parent.parent / "output"
+        self.output_dir = output_dir or get_output_root()
         self.debug_dir = self.output_dir / "debug_bundles"
         self.debug_dir.mkdir(exist_ok=True, parents=True)
 
@@ -196,6 +199,7 @@ class DebugCollector:
         folder: str,
         error: Exception,
         context: dict[str, Any] = None,
+        runtime_config: dict[str, Any] = None,
     ) -> ProcessingError:
         """Capture a processing error with full context.
 
@@ -210,7 +214,7 @@ class DebugCollector:
             ProcessingError record ready for serialization
         """
         snapshot = self.capture_system_snapshot()
-        config = load_config() or {}
+        config = runtime_config or hydrate_runtime_config(load_config() or {})
 
         return ProcessingError(
             timestamp=datetime.now().isoformat(),
@@ -234,6 +238,7 @@ class DebugCollector:
         error: Exception = None,
         error_context: dict[str, Any] = None,
         performance_metrics: dict[str, Any] = None,
+        runtime_config: dict[str, Any] = None,
     ) -> RuntimeDiagnostics:
         """Capture complete runtime diagnostics.
 
@@ -250,12 +255,19 @@ class DebugCollector:
             RuntimeDiagnostics bundle
         """
         snapshot = self.capture_system_snapshot()
-        config = load_config() or {}
+        config = runtime_config or hydrate_runtime_config(load_config() or {})
         logs = self._collect_recent_logs()
 
         error_details = None
         if error:
-            err_record = self.capture_error(job_id, task_type, "", error, error_context)
+            err_record = self.capture_error(
+                job_id,
+                task_type,
+                "",
+                error,
+                error_context,
+                runtime_config=config,
+            )
             error_details = asdict(err_record)
 
         diag = RuntimeDiagnostics(
@@ -371,3 +383,129 @@ class DebugCollector:
         """Get recent debug bundles."""
         bundles = sorted(self.debug_dir.glob("debug_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         return bundles[:limit]
+
+
+def _load_latest_job_context(output_dir: Path) -> dict[str, Any]:
+    """Load most recent job metadata from web job history when available."""
+    history_path = output_dir / "web_job_history.json"
+    if not history_path.exists():
+        return {}
+    try:
+        with open(history_path, "r", encoding="utf-8") as file_handle:
+            payload = json.load(file_handle)
+        jobs = payload.get("jobs", []) if isinstance(payload, dict) else []
+        if not jobs:
+            return {}
+        latest = jobs[-1]
+        if not isinstance(latest, dict):
+            return {}
+        return {
+            "job_id": str(latest.get("id") or "").strip(),
+            "task_type": str(latest.get("taskType") or "").strip(),
+            "status": str(latest.get("status") or "").strip(),
+            "message": str(latest.get("currentMessage") or "").strip(),
+            "error": str(latest.get("error") or "").strip(),
+            "provider": str((latest.get("options") or {}).get("provider") or "").strip(),
+            "model": str((latest.get("options") or {}).get("model") or "").strip(),
+        }
+    except Exception:
+        return {}
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Capture a runtime diagnostics bundle.")
+    parser.add_argument("--job-id", default="", help="Job identifier stored in the bundle")
+    parser.add_argument("--task-type", default="", help="Task type label stored in the bundle")
+    parser.add_argument(
+        "--status",
+        default="",
+        choices=["queued", "running", "completed", "failed", "canceled"],
+        help="Execution status stored in the bundle",
+    )
+    parser.add_argument(
+        "--message",
+        action="append",
+        default=[],
+        help="Optional message to include. Repeat for multiple lines.",
+    )
+    parser.add_argument(
+        "--error-message",
+        default="",
+        help="Optional error text to include as error_details.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help="Optional override for output root (defaults to configured output root).",
+    )
+    parser.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture a bundle only; skip immediate analysis output.",
+    )
+    parser.add_argument(
+        "--provider",
+        default="",
+        help="Optional runtime provider override for captured config (e.g., azure_ai_foundry).",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Optional runtime model override for captured config (e.g., profile::model).",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = _parse_args()
+    output_dir = Path(args.output_dir).expanduser() if args.output_dir else get_output_root()
+    collector = DebugCollector(output_dir=output_dir)
+    latest_job = _load_latest_job_context(output_dir)
+
+    job_id = args.job_id.strip() or latest_job.get("job_id") or "manual_debug"
+    task_type = args.task_type.strip() or latest_job.get("task_type") or "manual"
+    status = (args.status or "").strip() or latest_job.get("status") or "failed"
+    messages = args.message or []
+    if not messages and latest_job.get("message"):
+        messages = [latest_job["message"]]
+
+    runtime_config = hydrate_runtime_config(load_config() or {})
+    effective_provider = args.provider.strip() or latest_job.get("provider") or ""
+    effective_model = args.model.strip() or latest_job.get("model") or ""
+    if effective_provider:
+        runtime_config["llm_provider"] = effective_provider
+    if effective_model:
+        runtime_config["llm_model"] = effective_model
+    if effective_provider and not effective_model:
+        runtime_config = hydrate_runtime_config(runtime_config)
+    runtime_config["llm_provider"] = normalize_provider(runtime_config.get("llm_provider", ""))
+
+    error_message = args.error_message.strip() or latest_job.get("error") or ""
+    error = RuntimeError(error_message) if error_message else None
+    diagnostics = collector.capture_diagnostics(
+        job_id=job_id,
+        task_type=task_type,
+        status=status,
+        messages=messages,
+        error=error,
+        runtime_config=runtime_config,
+    )
+    bundle_path = collector.save_debug_bundle(diagnostics)
+    if not bundle_path:
+        return 1
+    if args.capture_only:
+        return 0
+
+    from toolkit.debug_analyzer import DebugAnalyzer
+
+    analyzer = DebugAnalyzer(output_dir=output_dir)
+    bundle = analyzer.load_bundle(bundle_path)
+    analysis = analyzer.analyze_bundle(bundle)
+    report = analyzer.format_report(analysis)
+    print()
+    print(report)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
