@@ -256,6 +256,8 @@ class JobQueueManager:
             return
         timestamp = datetime.now().isoformat()
         formatted = f"[{timestamp}] [{job_id}] {line}"
+        # Clear hidden flag before writing to avoid permission issues on some network shares.
+        set_windows_hidden(EXECUTION_LOG_PATH, hidden=False)
         with open(EXECUTION_LOG_PATH, "a", encoding="utf-8") as log_file:
             log_file.write(formatted + "\n")
         set_windows_hidden(EXECUTION_LOG_PATH, hidden=True)
@@ -419,6 +421,8 @@ class JobQueueManager:
             "savedAt": datetime.now().isoformat(),
             "jobs": [self._jobs[job_id].to_dict() for job_id in self._job_order],
         }
+        # Clear hidden flag before writing to avoid permission issues on some network shares.
+        set_windows_hidden(JOB_HISTORY_PATH, hidden=False)
         with open(JOB_HISTORY_PATH, "w", encoding="utf-8") as file_handle:
             json.dump(payload, file_handle, indent=2)
         set_windows_hidden(JOB_HISTORY_PATH, hidden=True)
