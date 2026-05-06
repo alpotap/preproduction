@@ -10,6 +10,7 @@ from typing import Optional
 import argparse
 
 from toolkit.debug_collector import DebugCollector
+from toolkit.providers import get_azure_ai_foundry_settings
 
 
 class DebugAnalyzer:
@@ -154,13 +155,18 @@ class DebugAnalyzer:
         provider = runtime_config.get("llm_provider", "").lower()
 
         if provider == "azure_ai_foundry":
-            if not runtime_config.get("azure_ai_foundry_api_key"):
+            foundry_settings = get_azure_ai_foundry_settings(runtime_config)
+            if not foundry_settings.get("api_key"):
                 analysis["issues"].append("🔴 AZURE AI FOUNDRY: Missing API key")
-                analysis["recommendations"].append("Set AZURE_AI_FOUNDRY_API_KEY")
-            endpoint = runtime_config.get("azure_ai_foundry_endpoint", "")
+                analysis["recommendations"].append(
+                    "Set AZURE_AI_FOUNDRY_<PROFILE>_API_KEY and include the profile in AZURE_AI_FOUNDRY_PROFILE_IDS"
+                )
+            endpoint = foundry_settings.get("endpoint", "")
             if not endpoint:
                 analysis["issues"].append("🔴 AZURE AI FOUNDRY: Missing endpoint")
-                analysis["recommendations"].append("Set AZURE_AI_FOUNDRY_ENDPOINT")
+                analysis["recommendations"].append(
+                    "Set AZURE_AI_FOUNDRY_<PROFILE>_ENDPOINT and include the profile in AZURE_AI_FOUNDRY_PROFILE_IDS"
+                )
             elif "services.ai.azure.com" not in endpoint and "cognitiveservices.azure.com" not in endpoint:
                 analysis["issues"].append(
                     f"⚠️  AZURE AI FOUNDRY: Unrecognised endpoint domain in '{endpoint}'. "

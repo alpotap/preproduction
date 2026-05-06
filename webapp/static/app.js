@@ -168,11 +168,33 @@ function renderCapabilities() {
   elements.providerSelect.innerHTML = providers
     .map(provider => `<option value="${provider.key}">${provider.label}</option>`)
     .join('');
-  elements.providerSelect.value = config.llmProvider;
+  
+  // Try to restore provider from localStorage, otherwise use server config
+  try {
+    const savedProvider = localStorage.getItem('dct_llmProvider');
+    if (savedProvider) {
+      elements.providerSelect.value = savedProvider;
+    } else {
+      elements.providerSelect.value = config.llmProvider;
+    }
+  } catch (e) {
+    elements.providerSelect.value = config.llmProvider;
+  }
 
   elements.outputTypeList.innerHTML = outputTypes
     .map(outputType => {
-      const checked = (config.outputTypes || []).includes(outputType.key) ? 'checked' : '';
+      // Try to restore from localStorage if available, otherwise use server config
+      let savedTypes = [];
+      try {
+        const stored = localStorage.getItem('dct_outputTypes');
+        if (stored) {
+          savedTypes = JSON.parse(stored);
+        }
+      } catch (e) {
+        // ignore localStorage errors
+      }
+      const typesToCheck = savedTypes.length > 0 ? savedTypes : (config.outputTypes || []);
+      const checked = typesToCheck.includes(outputType.key) ? 'checked' : '';
       return `
         <label class="checkbox-item">
           <input type="checkbox" value="${outputType.key}" ${checked}>
@@ -410,6 +432,15 @@ async function enqueueJob() {
     payload.selectedFiles = [];
   }
 
+  // Save user selections to localStorage for next session
+  try {
+    localStorage.setItem('dct_llmProvider', payload.provider);
+    localStorage.setItem('dct_llmModel', payload.model || '');
+    localStorage.setItem('dct_outputTypes', JSON.stringify(payload.outputTypes));
+  } catch (e) {
+    // localStorage not available, continue anyway
+  }
+
   try {
     await fetchJson('/api/jobs', {
       method: 'POST',
@@ -535,7 +566,7 @@ async function refreshFileBrowser() {
     return;
   }
 
-  const url = `/api/files?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(selectedFolder)}`;
+  const url = `/api/files?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(selectedFolder)}&limit=50&skip=0`;
   const data = await fetchJson(url);
   const files = data.files || [];
   if (!files.length) {

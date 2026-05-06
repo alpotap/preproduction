@@ -2,7 +2,9 @@
 """Interactive Azure AI Foundry environment setup for Windows.
 
 Asks for 4 fields per AI entry and writes the required environment variables
-to HKCU\\Environment (User scope). It also mirrors values to current process.
+to HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\Environment (MACHINE scope).
+Machine scope ensures Windows services can access these variables.
+It also mirrors values to current process.
 """
 
 from __future__ import annotations
@@ -23,6 +25,13 @@ def normalize_profile_id(name: str) -> str:
 
 
 def set_user_and_process_env(name: str, value: str) -> None:
+    """Set environment variable in MACHINE scope (registry) and current process.
+    
+    MACHINE scope (HKLM) is required so Windows services can access these variables.
+    Services run under different accounts and cannot read USER-scoped (HKCU) variables.
+    
+    Note: Requires administrative privileges to write to HKLM.
+    """
     os.environ[name] = value
     if os.name != "nt":
         return
@@ -30,15 +39,22 @@ def set_user_and_process_env(name: str, value: str) -> None:
     try:
         import winreg
 
+        # Write to MACHINE scope (HKLM) so Windows services can read these vars
         with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Environment",
+            winreg.HKEY_LOCAL_MACHINE,
+            r"System\CurrentControlSet\Control\Session Manager\Environment",
             0,
             winreg.KEY_SET_VALUE,
         ) as key:
             winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, value)
+    except PermissionError:
+        raise RuntimeError(
+            f"Failed to write MACHINE environment variable '{name}': "
+            "This wizard requires administrator privileges. "
+            "Please run this script as Administrator (right-click > Run as administrator)."
+        )
     except Exception as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(f"Failed to write user environment variable '{name}': {exc}") from exc
+        raise RuntimeError(f"Failed to write MACHINE environment variable '{name}': {exc}") from exc
 
 
 def _contains_non_ascii(value: str) -> bool:
@@ -74,7 +90,9 @@ def main() -> int:
         print("This setup helper is intended for Windows.")
 
     print("Azure AI Foundry setup")
-    print("This wizard stores values in User environment variables and loads them in this process.")
+    print("This wizard stores values in MACHINE environment variables (system-wide scope).")
+    print("IMPORTANT: This wizard requires administrator privileges.")
+    print("If you see 'Access Denied' errors, please run as Administrator (right-click > Run as administrator).")
     print("")
 
     count = prompt_count()
@@ -135,14 +153,17 @@ def main() -> int:
     set_user_and_process_env("AZURE_AI_FOUNDRY_MODEL_NAME", first["name"])
 
     print("")
-    print("Saved Azure AI Foundry environment variables.")
+    print("Saved Azure AI Foundry environment variables to MACHINE scope (system-wide).")
     print(f"Profiles: {profile_ids}")
     for item in entries:
         print(
             f"- {item['profile']}: model='{item['name']}', endpoint='{item['endpoint']}', apiVersion='{item['api_version']}'"
         )
     print("")
-    print("Next: restart the app (or open a new terminal) and run your verification.")
+    print("IMPORTANT: Restart the Windows service for these variables to take effect:")
+    print("  Restart-Service DocumentCorrectionToolkitWeb")
+    print("")
+    print("Alternatively, restart the app (or open a new terminal) to use new variables in local mode.")
     return 0
 
 

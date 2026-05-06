@@ -215,16 +215,32 @@ async def upload_files(folder: str = Query(...), files: list[UploadFile] = File(
 def list_files(
     scope: Literal["input", "output"] = Query("input"),
     folder: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    skip: int = Query(0, ge=0),
 ) -> dict:
     base_dir = _resolve_scope_root(scope)
     target_dir = base_dir / folder if folder else base_dir
     if not target_dir.exists() or not target_dir.is_dir():
-        return {"files": []}
+        return {"files": [], "total": 0, "skipped": skip, "limit": limit}
 
-    items = []
-    for path in sorted((p for p in target_dir.iterdir() if p.is_file()), key=lambda item: item.stat().st_mtime, reverse=True):
+    # Collect all files with stats for sorting (this is the expensive operation)
+    all_files = []
+    for path in target_dir.iterdir():
+        if not path.is_file():
+            continue
         if scope == "output" and path.name in HIDDEN_OUTPUT_FILENAMES:
             continue
+        all_files.append(path)
+    
+    # Sort by modification time (newest first)
+    all_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    total = len(all_files)
+    
+    # Apply pagination
+    paginated_files = all_files[skip : skip + limit]
+    
+    items = []
+    for path in paginated_files:
         relative_path = path.relative_to(base_dir).as_posix()
         stat = path.stat()
         items.append(
@@ -238,7 +254,9 @@ def list_files(
                 "extension": path.suffix.lower(),
             }
         )
-    return {"files": items}
+    
+    return {"files": items, "total": total, "skipped": skip, "limit": limit, "hasMore": skip + limit < total}
+
 
 
 @app.get("/api/processable-files")
