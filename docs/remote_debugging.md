@@ -13,6 +13,15 @@ When the Document Correction Toolkit runs on a remote server, you need a way to 
 - **Analyze** issues locally using built-in analysis tools
 - **Fix** problems with full context and visibility
 
+## How to use this guide
+
+There are two ways to use remote debugging:
+
+1. **CLI mode (recommended):** Run ready-to-use commands. No code changes required.
+2. **Integration mode (optional):** Copy Python snippets into your own processing code to auto-capture diagnostics.
+
+If you are unsure, use **CLI mode** first.
+
 ## Architecture
 
 The remote debug system has three parts:
@@ -22,6 +31,45 @@ The remote debug system has three parts:
 3. **Local Analyzer** (`toolkit/debug_analyzer.py`) — Analyzes bundles and generates reports
 
 ## Quick Start
+
+### Important first rule
+
+Run commands from the repository root, not from `toolkit/`.
+
+Correct:
+```powershell
+cd C:\tools\preproduction
+python -m toolkit.debug_collector
+```
+
+Not recommended:
+```powershell
+cd C:\tools\preproduction\toolkit
+py debug_collector.py
+```
+
+Running from `toolkit/` can cause `ModuleNotFoundError: No module named 'toolkit'`.
+
+### Fast path (no code changes)
+
+Use this when you just need diagnostics quickly.
+
+1. On local machine, start the web app:
+  ```powershell
+  cd C:\Workfold\Enablement ACTIVE\aitools\preproduction
+  py .\local_web.py
+  ```
+2. On remote machine, run the collector as a module:
+  ```powershell
+  cd C:\tools\preproduction
+  py -m toolkit.debug_collector
+  ```
+3. Copy the bundle from `output/debug_bundles/` to your local machine.
+4. Analyze locally:
+  ```powershell
+  cd C:\Workfold\Enablement ACTIVE\aitools\preproduction
+  py -m toolkit.debug_analyzer latest
+  ```
 
 ### Setup (One-time)
 
@@ -43,6 +91,8 @@ Ensure `toolkit/debug_collector.py` is available (included in repository).
    ```
 
 ### Remote Server: Capture & Send Diagnostics
+
+The section below is an **integration example**. It is optional and meant for developers who want to embed debug capture directly in code.
 
 **Python code on remote server:**
 
@@ -172,6 +222,8 @@ The local analyzer detects common issues:
 - ❌ **Other errors** — Full traceback provided
 
 ## Integration Examples
+
+Everything in this section is optional example code. Copy it only if you want automatic debug capture integrated into your application flow.
 
 ### Wrap Your Processing Loop
 
