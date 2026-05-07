@@ -158,9 +158,9 @@ Response fields:
 ### POST /api/jobs/{job_id}/cancel
 
 Cancel behavior:
-- queued: canceled immediately
-- running: marks cancelRequested=true and attempts cooperative cancel at safe checkpoints
-- other statuses: 400
+- Queued: canceled immediately.
+- Running: marks cancelRequested=true and attempts cooperative cancel at safe checkpoints.
+- Other statuses: 400.
 
 Response fields:
 - job (updated job record)
@@ -168,8 +168,8 @@ Response fields:
 ### POST /api/jobs/{job_id}/retry
 
 Retry behavior:
-- allowed from completed, failed, or canceled
-- creates a new queued job with parentJobId and retries incremented
+- Allowed from completed, failed, or canceled.
+- Creates a new queued job with parentJobId and retries incremented.
 
 Response fields:
 - job (new job record)

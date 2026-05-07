@@ -459,9 +459,9 @@ Response:
 
 **Mitigations:**
 - `DebugCollector` automatically redacts values containing "API_KEY", "SECRET", etc.
-- Path values truncated to 200 chars
-- Review before sharing bundles outside your organization
-- Use HTTPS/secure channels if transmitting over public networks
+- Path values are truncated to 200 chars.
+- Review before sharing bundles outside your organization.
+- Use HTTPS/secure channels if transmitting over public networks.
 
 ## Best Practices
 

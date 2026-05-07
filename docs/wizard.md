@@ -100,13 +100,13 @@ All selected formats are generated from a **single LLM pass** — no extra API c
 - Added text: red bold
 - Deleted text: `[-deleted_text-]` strikethrough
 - Explanations: Word comments
-- Best for reviewing corrections in context
+- Best for reviewing corrections in context.
 
 ### `_corrected_track_changes.docx`
 - Corrections shown via Word Track Changes
 - Character-level granularity
 - Explanations as Word comments
-- Best for formal review workflows (accept/reject individual changes)
+- Best for formal review workflows (accept/reject individual changes).
 
 ### `_corrected_hybrid.docx`
 - Inline correction styling + real Word comments for explanations
@@ -116,7 +116,7 @@ All selected formats are generated from a **single LLM pass** — no extra API c
 - Same inline correction styling as inline format
 - No explanatory comments or deletion placeholders
 - Deletions removed cleanly
-- Best when you want visual correction marks without notes
+- Best when you want visual correction marks without notes.
 
 ## CLI troubleshooting
 
