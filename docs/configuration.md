@@ -57,6 +57,7 @@ Notes:
 - `Input Directory` and `Output Directory` are no longer read from `readme.md`; use `paths.json` instead.
 - Summary report artifacts (`summary_report_state.json` and `summary_report.docx`) are generated automatically from execution statistics and do not require additional configuration keys.
 - CLI and web both persist provider/model/prompt/output-type defaults into this shared section, so choices apply across browser sessions and users on the same host.
+- Invisible Unicode whitespace (non-breaking spaces, zero-width characters, etc.) in source documents is automatically normalized before LLM analysis. This is transparent and requires no configuration.
 
 ## Windows service configuration
 

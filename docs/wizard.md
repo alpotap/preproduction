@@ -43,6 +43,10 @@ For unattended web hosting on Windows, use the separate service installer descri
 
 10. **Save preferences** — Provider, model, prompt, and output type choices are stored for the next session and shared with the web UI for all users on the same host.
 
+## Hidden Whitespace Handling
+
+The tool automatically detects and normalizes invisible Unicode whitespace characters (non-breaking spaces, zero-width characters, etc.) in source documents before analysis. This prevents false-positive corrections like "Missing space before 'dialog'" when the spacing is visually correct but hidden characters are present. Normalized text is used during LLM analysis, and corrections caused purely by invisible whitespace are dropped automatically.
+
 11. **Foundry profile selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified entries such as `gpt-4o-mini [primary]`.
 
 ## Command-line mode

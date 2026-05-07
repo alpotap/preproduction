@@ -54,9 +54,55 @@ def _is_missing_period_fix(original: str, corrected: str) -> bool:
     return (original or "").rstrip() + "." == (corrected or "").rstrip()
 
 
-def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, int, int]:
+def _normalize_hidden_whitespace_for_comparison(text: str) -> str:
+    """Normalize invisible Unicode whitespace for comparison purposes only.
+    
+    Returns text with invisible spaces converted to regular spaces and zero-width chars removed.
+    Used to detect no-op corrections caused by hidden whitespace.
+    """
+    if not text:
+        return text
+    
+    # Invisible space characters to replace with regular space
+    invisible_spaces = {
+        '\xa0': ' ',      # Non-breaking space (NBSP)
+        '\u202f': ' ',    # Narrow no-break space
+        '\u2000': ' ',    # En quad
+        '\u2001': ' ',    # Em quad
+        '\u2002': ' ',    # En space
+        '\u2003': ' ',    # Em space
+        '\u2004': ' ',    # Three-per-em space
+        '\u2005': ' ',    # Four-per-em space
+        '\u2006': ' ',    # Six-per-em space
+        '\u2007': ' ',    # Figure space
+        '\u2008': ' ',    # Punctuation space
+        '\u2009': ' ',    # Thin space
+        '\u200a': ' ',    # Hair space
+    }
+    
+    for char, replacement in invisible_spaces.items():
+        if char in text:
+            text = text.replace(char, replacement)
+    
+    # Zero-width characters to remove
+    zero_width_chars = {
+        '\u200b',  # Zero-width space
+        '\u200c',  # Zero-width non-joiner
+        '\u200d',  # Zero-width joiner
+        '\ufeff',  # Zero-width no-break space (BOM)
+    }
+    
+    for char in zero_width_chars:
+        if char in text:
+            text = text.replace(char, '')
+    
+    return text
+
+
+def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, int, int, int]:
     sanitized: list[dict] = []
     dropped_terminal_downgrades = 0
+    dropped_hidden_whitespace_noops = 0
     for entry in result:
         if not isinstance(entry, dict):
             continue
@@ -67,6 +113,13 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
         if _is_terminal_downgrade_to_comma(original, corrected):
             dropped_terminal_downgrades += 1
             continue
+        
+        # Drop corrections where original and corrected are identical after hidden-whitespace normalization
+        # (these are false positives from invisible Unicode spaces in input)
+        if _normalize_hidden_whitespace_for_comparison(original) == _normalize_hidden_whitespace_for_comparison(corrected):
+            dropped_hidden_whitespace_noops += 1
+            continue
+        
         sanitized.append(
             {
                 "explanation": str(entry.get("explanation") or ""),
@@ -99,7 +152,7 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
             existing_originals.add(line)
             added_missing_period_entries += 1
 
-    return sanitized, dropped_terminal_downgrades, added_missing_period_entries
+    return sanitized, dropped_terminal_downgrades, added_missing_period_entries, dropped_hidden_whitespace_noops
 
 
 def _append_raw_llm_output(model_name, prompt_key, content):
@@ -121,6 +174,147 @@ def _append_raw_llm_output(model_name, prompt_key, content):
     if len(lines) > RAW_OUTPUT_TRACKER_MAX_LINES:
         with open(RAW_OUTPUT_TRACKER_PATH, "w", encoding="utf-8") as tracker_file:
             tracker_file.writelines(lines[-RAW_OUTPUT_TRACKER_MAX_LINES:])
+
+
+def _extract_json_array_from_response(content: str) -> tuple[str, bool]:
+    """Robustly extract JSON array from LLM response, handling markdown blocks and embedded JSON.
+    
+    Tries multiple strategies in order:
+    1. Find JSON in markdown code block: ```json [...] ```
+    2. Find raw JSON array by bracket-depth matching: look for [ and find matching ]
+    3. Lenient fallback: find first [ and last ] if both exist
+    4. If nothing works, raise ValueError
+    
+    Returns (json_string, used_partial_recovery).
+    """
+    if not content:
+        raise ValueError("LLM response is empty.")
+    
+    # Strategy 1: Look for markdown code block with JSON (non-greedy to avoid capturing too much)
+    json_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', content)
+    if json_match:
+        return json_match.group(1), False
+    
+    # Strategy 2: Look for raw JSON array - try from each [ found in content
+    # Uses bracket-depth tracking to find actual end of JSON, handling nested structures
+    bracket_positions = [i for i, c in enumerate(content) if c == '[']
+    
+    for start_pos in bracket_positions:
+        # Try to find matching ] by tracking bracket depth and string state
+        bracket_depth = 0
+        in_string = False
+        escape_next = False
+        
+        for end_pos in range(start_pos, len(content)):
+            char = content[end_pos]
+            
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\':
+                escape_next = True
+                continue
+            
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            
+            if not in_string:
+                if char == '[':
+                    bracket_depth += 1
+                elif char == ']':
+                    bracket_depth -= 1
+                    if bracket_depth == 0:
+                        # Found matching ], try to parse this as JSON
+                        candidate = content[start_pos:end_pos+1]
+                        try:
+                            json.loads(candidate)  # Validate it's parseable JSON
+                            return candidate, False
+                        except json.JSONDecodeError:
+                            break  # This [ didn't work, try next one
+    
+    # Strategy 3: Lenient fallback - find first [ and last ] (handles edge cases with malformed JSON)
+    # This may capture extra text but is better than losing corrections entirely
+    first_bracket = content.find('[')
+    last_bracket = content.rfind(']')
+    if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
+        candidate = content[first_bracket:last_bracket+1]
+        try:
+            json.loads(candidate)
+            return candidate, False
+        except json.JSONDecodeError:
+            pass  # This fallback didn't work either, will raise below
+
+    # Strategy 4: Partial recovery for truncated JSON arrays.
+    # Some providers cut output mid-object when generation stops early.
+    recovered_objects: list[str] = []
+    start = content.find('[')
+    if start != -1:
+        i = start + 1
+        n = len(content)
+        while i < n:
+            while i < n and content[i] in " \t\r\n,":
+                i += 1
+            if i >= n:
+                break
+            if content[i] == ']':
+                break
+            if content[i] != '{':
+                i += 1
+                continue
+
+            obj_start = i
+            brace_depth = 0
+            in_string = False
+            escape_next = False
+            j = i
+            while j < n:
+                ch = content[j]
+                if escape_next:
+                    escape_next = False
+                elif ch == '\\':
+                    escape_next = True
+                elif ch == '"':
+                    in_string = not in_string
+                elif not in_string:
+                    if ch == '{':
+                        brace_depth += 1
+                    elif ch == '}':
+                        brace_depth -= 1
+                        if brace_depth == 0:
+                            candidate_obj = content[obj_start:j+1]
+                            try:
+                                json.loads(candidate_obj)
+                                recovered_objects.append(candidate_obj)
+                            except json.JSONDecodeError:
+                                pass
+                            i = j + 1
+                            break
+                j += 1
+
+            if j >= n:
+                # Truncated mid-object; stop and keep recovered complete objects.
+                break
+
+    if recovered_objects:
+        return f"[{','.join(recovered_objects)}]", True
+    
+    # If we get here, no valid JSON array was found
+    raise ValueError("Could not find a valid JSON array in the LLM response.")
+
+
+def _response_looks_truncated_json(content: str) -> bool:
+    """Heuristic: detect likely truncated JSON responses from the model."""
+    if not content:
+        return False
+    stripped = content.strip()
+    if stripped.startswith("```json") and "```" not in stripped[7:]:
+        return True
+    if stripped.startswith("[") and not stripped.endswith("]"):
+        return True
+    return False
+
 
 def get_corrections_from_llm(text, config, client):
     """Sends text to the LLM and returns corrections, input/output tokens, and duration."""
@@ -154,20 +348,8 @@ def get_corrections_from_llm(text, config, client):
             content = response.choices[0].message.content.strip()
             _append_raw_llm_output(resolved_model, prompt_key, content)
 
-            # More robustly find JSON, even if it's embedded in conversation
-            json_str_to_decode = ""
-            json_match = re.search(r'```(?:json)?\s*(\[.*\])\s*```', content, re.DOTALL)
-            if json_match:
-                json_str_to_decode = json_match.group(1)
-            else:
-                # Fallback to finding the raw array if no markdown block is found
-                json_start_index = content.find('[')
-                json_end_index = content.rfind(']')
-                if json_start_index != -1 and json_end_index != -1 and json_end_index > json_start_index:
-                    json_str_to_decode = content[json_start_index : json_end_index + 1]
-                else:
-                    # If we can't find a JSON block or array, the response is invalid.
-                    raise ValueError("Could not find a valid JSON array in the LLM response.")
+            # Use robust JSON extraction that handles markdown blocks, embedded JSON, and nested structures
+            json_str_to_decode, used_partial_recovery = _extract_json_array_from_response(content)
             
             # Attempt to fix common JSON syntax errors from LLMs
             json_str_to_decode = re.sub(r'}\s*{', '}, {', json_str_to_decode) # Fix missing comma between objects
@@ -176,11 +358,15 @@ def get_corrections_from_llm(text, config, client):
             result = json.loads(json_str_to_decode)
             if not isinstance(result, list):
                 raise ValueError("LLM response is valid JSON but not a list.")
-            result, dropped_count, added_count = _sanitize_and_augment_corrections(result, text)
+            if used_partial_recovery:
+                print(f"  [i] Recovered {len(result)} correction(s) from a truncated LLM JSON response.")
+            result, dropped_count, added_count, dropped_hidden_ws_count = _sanitize_and_augment_corrections(result, text)
             if dropped_count:
                 print(f"  [i] Dropped {dropped_count} terminal punctuation downgrade correction(s) (.?! -> ,).")
             if added_count:
                 print(f"  [i] Added {added_count} missing-period correction(s) for bullet/option list items.")
+            if dropped_hidden_ws_count:
+                print(f"  [i] Dropped {dropped_hidden_ws_count} false-positive correction(s) caused by hidden Unicode whitespace.")
             return result, prompt_tokens, completion_tokens, llm_time
 
         except (ValueError, json.JSONDecodeError) as e:
@@ -192,6 +378,8 @@ def get_corrections_from_llm(text, config, client):
                 continue
 
             print(f"  [!] JSON parsing failed (Attempt {attempt+1}/{max_retries}): {e}")
+            if _response_looks_truncated_json(content):
+                print(f"  [i] Likely truncated model response (len={len(content)}).")
             if attempt == max_retries - 1:
                 print(f"  -> Raw response preview: {content[:500]}...")
                 return [], prompt_tokens, completion_tokens, llm_time

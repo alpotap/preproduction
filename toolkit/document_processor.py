@@ -2,12 +2,63 @@
 
 import difflib
 import copy
+import re
 from lxml import etree
 from docx import Document
 from docx.shared import RGBColor
 from docx.oxml.ns import qn
 from toolkit.llm_service import get_corrections_from_llm, get_text_from_llm
 from toolkit.prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
+
+
+def _normalize_hidden_whitespace(text: str) -> tuple[str, int]:
+    """Normalize invisible Unicode whitespace to regular spaces; return (normalized_text, count_of_replacements).
+    
+    Maps NBSP, narrow NBSP, figure space, thin space, and other invisible whitespace to regular space.
+    Also removes zero-width characters (ZWSP, ZWNJ, ZWJ, BOM).
+    """
+    if not text:
+        return text, 0
+    
+    original_text = text
+    replacement_count = 0
+    
+    # Invisible space characters to replace with regular space
+    invisible_spaces = {
+        '\xa0': ' ',      # Non-breaking space (NBSP)
+        '\u202f': ' ',    # Narrow no-break space
+        '\u2000': ' ',    # En quad
+        '\u2001': ' ',    # Em quad
+        '\u2002': ' ',    # En space
+        '\u2003': ' ',    # Em space
+        '\u2004': ' ',    # Three-per-em space
+        '\u2005': ' ',    # Four-per-em space
+        '\u2006': ' ',    # Six-per-em space
+        '\u2007': ' ',    # Figure space
+        '\u2008': ' ',    # Punctuation space
+        '\u2009': ' ',    # Thin space
+        '\u200a': ' ',    # Hair space
+    }
+    
+    for char, replacement in invisible_spaces.items():
+        if char in text:
+            text = text.replace(char, replacement)
+            replacement_count += text.count(replacement) if replacement == ' ' else 1
+    
+    # Zero-width characters to remove
+    zero_width_chars = {
+        '\u200b',  # Zero-width space
+        '\u200c',  # Zero-width non-joiner
+        '\u200d',  # Zero-width joiner
+        '\ufeff',  # Zero-width no-break space (BOM)
+    }
+    
+    for char in zero_width_chars:
+        if char in text:
+            replacement_count += text.count(char)
+            text = text.replace(char, '')
+    
+    return text, replacement_count
 
 
 def _paragraph_contains_image(paragraph):
@@ -298,6 +349,7 @@ def build_correction_plan(input_path, config, client, should_cancel=None):
         "total_llm_time": 0,
         "total_input_tokens": 0,
         "total_tokens_generated": 0,
+        "hidden_chars_normalized": 0,
     }
 
     correction_plan = []
@@ -319,12 +371,19 @@ def build_correction_plan(input_path, config, client, should_cancel=None):
             current_batch = []
             current_word_count = 0
 
-        current_batch.append({'content': para.text})
+        # Normalize hidden whitespace before sending to LLM (primary prevention point)
+        normalized_text, norm_count = _normalize_hidden_whitespace(para.text)
+        stats["hidden_chars_normalized"] += norm_count
+        
+        current_batch.append({'content': normalized_text})
         current_word_count += len(text.split())
 
     if current_batch:
         _raise_if_canceled()
         _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats)
+
+    if stats["hidden_chars_normalized"] > 0:
+        print(f"[i] Normalized {stats['hidden_chars_normalized']} hidden Unicode whitespace character(s) before LLM analysis.")
 
     return correction_plan, stats
 

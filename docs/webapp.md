@@ -92,6 +92,10 @@ Step-by-step job submission:
 Provider/model/prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
 Provider choices in the wizard are filtered to configured and reachable providers only. For example, Ollama is hidden when no Ollama models are available on that server.
 
+## Hidden Whitespace Handling
+
+The tool automatically detects and normalizes invisible Unicode whitespace characters in source documents before analysis. This prevents false-positive corrections when spacing is visually correct but hidden characters are present. Normalized text is used during LLM analysis, and corrections caused purely by invisible whitespace are dropped automatically.
+
 For process jobs, each completed run also updates:
 - `output/<folder>/summary_report_state.json` (historical execution stats)
 - `output/<folder>/summary_report.docx` (auto-generated report from those stats)

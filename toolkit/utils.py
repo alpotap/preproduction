@@ -118,8 +118,8 @@ def load_config():
         return config
     with open(readme_path, 'r', encoding='utf-8') as f:
         content = f.read()
-    # Find Project Scope section
-    match = re.search(r'## Configuration\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+    # Find Runtime Configuration section
+    match = re.search(r'## Runtime Configuration\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
     if match:
         scope_text = match.group(1)
         for line in scope_text.split('\n'):
@@ -158,9 +158,9 @@ def save_config(config_to_save):
     updated_lines = []
     in_scope_section = False
     for line in lines:
-        if '## Configuration' in line:
+        if '## Runtime Configuration' in line:
             in_scope_section = True
-        elif in_scope_section and 'Configuration' not in line and line.startswith('##'):
+        elif in_scope_section and 'Runtime Configuration' not in line and line.startswith('##'):
             in_scope_section = False
         
         if in_scope_section and ': ' in line:

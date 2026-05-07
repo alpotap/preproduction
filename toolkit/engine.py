@@ -54,15 +54,19 @@ def hydrate_runtime_config(config):
     runtime_config["active_prompt"] = normalize_prompt_key(runtime_config.get("active_prompt", DEFAULT_PROMPT_KEY))
     runtime_config["output_types"] = normalize_output_types(runtime_config.get("output_types", DEFAULT_OUTPUT_TYPES))
 
+    # Preserve saved llm_model from config; only use provider settings as fallback if model is not saved
+    saved_model = str(runtime_config.get("llm_model", "")).strip()
+    
     if runtime_config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER:
-        runtime_config["llm_model"] = ""
-        foundry_settings = get_azure_ai_foundry_settings(runtime_config)
-        if foundry_settings["selected_value"]:
-            runtime_config["llm_model"] = foundry_settings["selected_value"]
+        if not saved_model:
+            foundry_settings = get_azure_ai_foundry_settings(runtime_config)
+            if foundry_settings["selected_value"]:
+                runtime_config["llm_model"] = foundry_settings["selected_value"]
     elif runtime_config["llm_provider"] == LM_STUDIO_PROVIDER:
-        lm_studio_settings = get_lm_studio_settings(runtime_config)
-        if lm_studio_settings["model_name"]:
-            runtime_config["llm_model"] = lm_studio_settings["model_name"]
+        if not saved_model:
+            lm_studio_settings = get_lm_studio_settings(runtime_config)
+            if lm_studio_settings["model_name"]:
+                runtime_config["llm_model"] = lm_studio_settings["model_name"]
 
     return runtime_config
 
