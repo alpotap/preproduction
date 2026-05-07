@@ -50,12 +50,13 @@ Current keys:
 - LLM Max Tokens
 - Output Types
 
-Azure AI Foundry provider-specific settings are environment-only and are not read from `readme.md`.
+Azure AI Foundry endpoint, API key, and API version settings are environment-only.
 
 Notes:
 - `Output Types` controls only corrected document formats.
 - `Input Directory` and `Output Directory` are no longer read from `readme.md`; use `paths.json` instead.
 - Summary report artifacts (`summary_report_state.json` and `summary_report.docx`) are generated automatically from execution statistics and do not require additional configuration keys.
+- CLI and web both persist provider/model/prompt/output-type defaults into this shared section, so choices apply across browser sessions and users on the same host.
 
 ## Windows service configuration
 

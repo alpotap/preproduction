@@ -324,7 +324,7 @@ def run_interactive_wizard():
                     client.models.list()
                 save_config({
                     "llm_provider": config["llm_provider"],
-                    "llm_model": "" if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER else config["llm_model"],
+                    "llm_model": config["llm_model"],
                     "lm_studio_model_name": config.get("lm_studio_model_name", ""),
                     "active_prompt": config["active_prompt"],
                 })
@@ -394,7 +394,7 @@ def run_interactive_wizard():
     print(f"Using prompt: {selected_prompt.get('name', config['active_prompt'])} [{config['active_prompt']}]")
     save_config({
         "llm_provider": config["llm_provider"],
-        "llm_model": "" if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER else config["llm_model"],
+        "llm_model": config["llm_model"],
         "lm_studio_model_name": config.get("lm_studio_model_name", ""),
         "active_prompt": config["active_prompt"],
         "output_types": serialize_output_types(config["output_types"]),
@@ -427,7 +427,7 @@ def run_interactive_wizard():
     print("\nSaving choices for next run...")
     save_config({
         "llm_provider": config["llm_provider"],
-        "llm_model": "" if config["llm_provider"] == AZURE_AI_FOUNDRY_PROVIDER else config["llm_model"],
+        "llm_model": config["llm_model"],
         "active_prompt": config["active_prompt"],
         "output_types": serialize_output_types(config["output_types"]),
     })

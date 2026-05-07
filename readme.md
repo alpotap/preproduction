@@ -117,6 +117,8 @@ The input/output roots come from `paths.json`.
 
 This section is read at runtime. Keep exact `Key: value` formatting.
 
+Provider, model, prompt, and output type defaults are shared across CLI and web for all users because they are persisted in this section.
+
 Language: en-US
 Highlight Corrections: true
 Add Comments: true

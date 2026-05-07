@@ -89,6 +89,9 @@ Step-by-step job submission:
 5. Choose prompt, provider, model, and output types.
 6. Click **Add Job To Queue**.
 
+Provider/model/prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
+Provider choices in the wizard are filtered to configured and reachable providers only. For example, Ollama is hidden when no Ollama models are available on that server.
+
 For process jobs, each completed run also updates:
 - `output/<folder>/summary_report_state.json` (historical execution stats)
 - `output/<folder>/summary_report.docx` (auto-generated report from those stats)
@@ -140,7 +143,7 @@ For Download + Process jobs, `.mhtml` sources are cleaned up after successful co
 ## Configuration and environment setup
 
 All provider variables, runtime keys, and environment setup are documented in [configuration.md](configuration.md).
-For Azure AI Foundry, profile/model settings are environment-only and are not persisted in `readme.md`.
+Selected provider/model/prompt/output-type defaults are persisted and shared across sessions/users.
 
 Recommended setup order:
 

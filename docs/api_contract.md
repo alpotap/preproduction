@@ -29,7 +29,7 @@ Response fields:
 - config.outputTypes
 - prompts[] with key, name, summary
 - outputTypes[] with key, label, suffix
-- providers[] with key, label
+- providers[] with key, label (only providers with configured/available model options)
 
 ### GET /api/models?provider=<provider_key>
 
@@ -39,6 +39,24 @@ Response fields:
 - models[] where each item is one of:
   - string model ID (Ollama/LM Studio)
   - object `{ value, label, model_name, profile }` (Azure AI Foundry)
+
+### POST /api/preferences
+
+Persists shared default selections used by both CLI and web sessions.
+
+Request body:
+- promptKey: string | null
+- outputTypes: string[] | null
+- provider: string | null
+- model: string | null
+
+Response fields:
+- status
+- saved[]
+
+Notes:
+- Values are persisted to the runtime configuration in `readme.md`.
+- Azure AI Foundry endpoint/auth settings remain environment-driven; selected model defaults are persisted.
 
 ### GET /api/provider-status
 
@@ -145,6 +163,7 @@ Response fields:
 
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
+- Job submission also persists selected provider/model/prompt/output types as shared defaults for future CLI/web sessions.
 
 In all path examples above, `input` and `output` refer to the roots defined in `paths.json`.
 

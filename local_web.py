@@ -66,6 +66,40 @@ class EnqueueJobRequest(BaseModel):
     selectedFiles: list[str] | None = None
 
 
+class SavePreferencesRequest(BaseModel):
+    promptKey: str | None = None
+    outputTypes: list[str] | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
+def _build_config_updates(
+    prompt_key: str | None,
+    output_types: list[str] | None,
+    provider: str | None,
+    model: str | None,
+) -> dict[str, str]:
+    updates: dict[str, str] = {}
+
+    if output_types is not None:
+        updates["output_types"] = serialize_output_types(normalize_output_types(output_types))
+
+    if prompt_key:
+        updates["active_prompt"] = prompt_key
+
+    if provider:
+        updates["llm_provider"] = provider
+
+    model_value = str(model or "").strip()
+    selected_provider = str(provider or "").strip().lower()
+    if model_value:
+        updates["llm_model"] = model_value
+        if selected_provider == LM_STUDIO_PROVIDER:
+            updates["lm_studio_model_name"] = model_value
+
+    return updates
+
+
 def _build_prompt_details(prompt_definition: dict) -> str:
     details: list[str] = []
     summary = str(prompt_definition.get("summary", "")).strip()
@@ -94,6 +128,49 @@ def _build_prompt_details(prompt_definition: dict) -> str:
     return " ".join(details).strip()
 
 
+def _build_available_providers_and_models(config: dict) -> tuple[list[dict[str, str]], dict[str, list]]:
+    provider_models: dict[str, list] = {
+        OLLAMA_PROVIDER: fetch_ollama_models(),
+        LM_STUDIO_PROVIDER: fetch_lm_studio_models(config),
+        AZURE_AI_FOUNDRY_PROVIDER: get_azure_ai_foundry_settings(config).get("model_options", []),
+    }
+
+    provider_labels = {
+        OLLAMA_PROVIDER: "Ollama",
+        LM_STUDIO_PROVIDER: "LM Studio",
+        AZURE_AI_FOUNDRY_PROVIDER: "Azure AI Foundry",
+    }
+    available_providers = [
+        {"key": key, "label": provider_labels[key]}
+        for key in (OLLAMA_PROVIDER, LM_STUDIO_PROVIDER, AZURE_AI_FOUNDRY_PROVIDER)
+        if provider_models.get(key)
+    ]
+    return available_providers, provider_models
+
+
+def _resolve_effective_model(models: list, current_model: str) -> str:
+    if not models:
+        return ""
+
+    normalized_models: list[str] = []
+    for model in models:
+        if isinstance(model, str):
+            normalized_models.append(model)
+            continue
+        if isinstance(model, dict):
+            value = str(model.get("value", "")).strip()
+            if value:
+                normalized_models.append(value)
+
+    if not normalized_models:
+        return ""
+
+    current = str(current_model or "").strip()
+    if current and current in normalized_models:
+        return current
+    return normalized_models[0]
+
+
 @app.get("/")
 def serve_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -102,10 +179,24 @@ def serve_index() -> FileResponse:
 @app.get("/api/capabilities")
 def get_capabilities() -> dict:
     config = hydrate_runtime_config(load_config())
+    providers, provider_models = _build_available_providers_and_models(config)
+
+    configured_provider = str(config.get("llm_provider", "")).strip()
+    available_provider_keys = [item["key"] for item in providers]
+    effective_provider = (
+        configured_provider
+        if configured_provider in available_provider_keys
+        else (available_provider_keys[0] if available_provider_keys else "")
+    )
+    effective_model = _resolve_effective_model(
+        provider_models.get(effective_provider, []),
+        str(config.get("llm_model", "")),
+    )
+
     return {
         "config": {
-            "llmProvider": config.get("llm_provider"),
-            "llmModel": config.get("llm_model"),
+            "llmProvider": effective_provider,
+            "llmModel": effective_model,
             "activePrompt": config.get("active_prompt"),
             "outputTypes": config.get("output_types"),
         },
@@ -133,11 +224,7 @@ def get_capabilities() -> dict:
             }
             for key, meta in OUTPUT_TYPE_REGISTRY.items()
         ],
-        "providers": [
-            {"key": OLLAMA_PROVIDER, "label": "Ollama"},
-            {"key": LM_STUDIO_PROVIDER, "label": "LM Studio"},
-            {"key": AZURE_AI_FOUNDRY_PROVIDER, "label": "Azure AI Foundry"},
-        ],
+        "providers": providers,
     }
 
 
@@ -362,29 +449,28 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
         "selectedFiles": sorted(set(selected_files)),
     }
 
-    config_updates: dict[str, str] = {
-        "output_types": serialize_output_types(selected_output_types),
-    }
-    if payload.promptKey:
-        config_updates["active_prompt"] = payload.promptKey
-    if payload.provider:
-        config_updates["llm_provider"] = payload.provider
-
-    model_value = str(payload.model or "").strip()
-    selected_provider = (payload.provider or "").strip().lower()
-    if model_value:
-        if selected_provider == AZURE_AI_FOUNDRY_PROVIDER:
-            # Azure model/deployment is environment-only and must not be persisted.
-            config_updates["llm_model"] = ""
-        else:
-            config_updates["llm_model"] = model_value
-            if selected_provider == LM_STUDIO_PROVIDER:
-                config_updates["lm_studio_model_name"] = model_value
-
+    config_updates = _build_config_updates(
+        prompt_key=payload.promptKey,
+        output_types=selected_output_types,
+        provider=payload.provider,
+        model=payload.model,
+    )
     save_config(config_updates)
 
     job = job_manager.enqueue(payload.taskType, folder, options)
     return {"job": job.to_dict()}
+
+
+@app.post("/api/preferences")
+def save_preferences(payload: SavePreferencesRequest) -> dict:
+    config_updates = _build_config_updates(
+        prompt_key=payload.promptKey,
+        output_types=payload.outputTypes,
+        provider=payload.provider,
+        model=payload.model,
+    )
+    save_config(config_updates)
+    return {"status": "ok", "saved": sorted(config_updates.keys())}
 
 
 @app.get("/api/jobs")

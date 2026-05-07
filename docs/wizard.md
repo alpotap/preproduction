@@ -41,7 +41,7 @@ For unattended web hosting on Windows, use the separate service installer descri
    - `output/<folder>/summary_report_state.json` (historical execution stats)
    - `output/<folder>/summary_report.docx` (readable report with run and category totals)
 
-10. **Save preferences** — Prompt and output type choices are stored for the next session. Azure AI Foundry profile/model values are read from environment variables and are not stored in `readme.md`.
+10. **Save preferences** — Provider, model, prompt, and output type choices are stored for the next session and shared with the web UI for all users on the same host.
 
 11. **Foundry profile selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified entries such as `gpt-4o-mini [primary]`.
 

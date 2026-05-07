@@ -168,32 +168,20 @@ function renderCapabilities() {
   elements.providerSelect.innerHTML = providers
     .map(provider => `<option value="${provider.key}">${provider.label}</option>`)
     .join('');
-  
-  // Try to restore provider from localStorage, otherwise use server config
-  try {
-    const savedProvider = localStorage.getItem('dct_llmProvider');
-    if (savedProvider) {
-      elements.providerSelect.value = savedProvider;
-    } else {
-      elements.providerSelect.value = config.llmProvider;
-    }
-  } catch (e) {
+
+  if (!providers.length) {
+    elements.providerSelect.innerHTML = '<option value="">No configured providers</option>';
+    elements.providerSelect.value = '';
+  } else {
     elements.providerSelect.value = config.llmProvider;
+    if (!elements.providerSelect.value) {
+      elements.providerSelect.value = providers[0].key;
+    }
   }
 
   elements.outputTypeList.innerHTML = outputTypes
     .map(outputType => {
-      // Try to restore from localStorage if available, otherwise use server config
-      let savedTypes = [];
-      try {
-        const stored = localStorage.getItem('dct_outputTypes');
-        if (stored) {
-          savedTypes = JSON.parse(stored);
-        }
-      } catch (e) {
-        // ignore localStorage errors
-      }
-      const typesToCheck = savedTypes.length > 0 ? savedTypes : (config.outputTypes || []);
+      const typesToCheck = config.outputTypes || [];
       const checked = typesToCheck.includes(outputType.key) ? 'checked' : '';
       return `
         <label class="checkbox-item">
@@ -227,6 +215,10 @@ function filterPromptsByCategory(categoryKey, preferredPromptKey = null) {
 
 async function loadModels(preferredModel = null) {
   const provider = elements.providerSelect.value;
+  if (!provider) {
+    elements.modelSelect.innerHTML = '<option value="">No model available</option>';
+    return;
+  }
   const fallbackModel = preferredModel
     || elements.modelSelect.value
     || state.capabilities?.config?.llmModel
@@ -254,6 +246,29 @@ async function loadModels(preferredModel = null) {
 
   if (fallbackModel && models.some(model => model.value === fallbackModel)) {
     elements.modelSelect.value = fallbackModel;
+  }
+}
+
+async function persistPreferences(overrides = {}) {
+  const payload = {
+    promptKey: elements.promptSelect.value || null,
+    outputTypes: selectedOutputTypes(),
+    provider: elements.providerSelect.value || null,
+    model: elements.modelSelect.value || null,
+    ...overrides,
+  };
+
+  await fetchJson('/api/preferences', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (state.capabilities?.config) {
+    state.capabilities.config.activePrompt = payload.promptKey || state.capabilities.config.activePrompt;
+    state.capabilities.config.outputTypes = payload.outputTypes || state.capabilities.config.outputTypes;
+    state.capabilities.config.llmProvider = payload.provider || state.capabilities.config.llmProvider;
+    state.capabilities.config.llmModel = payload.model || state.capabilities.config.llmModel;
   }
 }
 
@@ -420,6 +435,10 @@ async function enqueueJob() {
     setMessage(elements.jobMessage, 'Select an input folder.', true);
     return;
   }
+  if (!payload.provider) {
+    setMessage(elements.jobMessage, 'No configured LLM provider is available on this server.', true);
+    return;
+  }
   if (payload.taskType === 'download_process' && !payload.urls.trim()) {
     setMessage(elements.jobMessage, 'Add at least one URL for download-and-process jobs.', true);
     return;
@@ -430,15 +449,6 @@ async function enqueueJob() {
   }
   if (payload.taskType !== 'process') {
     payload.selectedFiles = [];
-  }
-
-  // Save user selections to localStorage for next session
-  try {
-    localStorage.setItem('dct_llmProvider', payload.provider);
-    localStorage.setItem('dct_llmModel', payload.model || '');
-    localStorage.setItem('dct_outputTypes', JSON.stringify(payload.outputTypes));
-  } catch (e) {
-    // localStorage not available, continue anyway
   }
 
   try {
@@ -662,11 +672,25 @@ function bindEvents() {
   elements.chooseFilesButton.addEventListener('click', () => elements.fileInput.click());
   elements.fileInput.addEventListener('change', event => uploadFiles(event.target.files));
   elements.enqueueJobButton.addEventListener('click', enqueueJob);
-  elements.providerSelect.addEventListener('change', loadModels);
-  elements.promptSelect.addEventListener('change', updatePromptTooltip);
+  elements.providerSelect.addEventListener('change', async () => {
+    await loadModels();
+    await persistPreferences();
+  });
+  elements.modelSelect.addEventListener('change', async () => {
+    await persistPreferences();
+  });
+  elements.promptSelect.addEventListener('change', async () => {
+    updatePromptTooltip();
+    await persistPreferences();
+  });
   elements.promptCategorySelect.addEventListener('change', () =>
     filterPromptsByCategory(elements.promptCategorySelect.value),
   );
+  elements.outputTypeList.addEventListener('change', async event => {
+    if (event.target && event.target.matches('input[type="checkbox"]')) {
+      await persistPreferences();
+    }
+  });
   elements.logKindSelect.addEventListener('change', refreshLogs);
   elements.browserScopeSelect.addEventListener('change', () => refreshFileBrowser());
   elements.browserFolderSelect.addEventListener('change', refreshFileBrowser);
