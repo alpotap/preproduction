@@ -55,6 +55,10 @@ class JobRecord:
     processed_files: int = 0
     downloaded_urls: int = 0
     output_count: int = 0
+    correction_count: int = 0
+    total_input_tokens: int = 0
+    total_tokens_generated: int = 0
+    total_tokens: int = 0
     retries: int = 0
     parent_job_id: str | None = None
     cancel_requested: bool = False
@@ -73,6 +77,10 @@ class JobRecord:
             "processedFiles": self.processed_files,
             "downloadedUrls": self.downloaded_urls,
             "outputCount": self.output_count,
+            "correctionCount": self.correction_count,
+            "totalInputTokens": self.total_input_tokens,
+            "totalTokensGenerated": self.total_tokens_generated,
+            "totalTokens": self.total_tokens,
             "retries": self.retries,
             "parentJobId": self.parent_job_id,
             "cancelRequested": self.cancel_requested,
@@ -95,6 +103,10 @@ class JobRecord:
             processed_files=int(payload.get("processedFiles", 0) or 0),
             downloaded_urls=int(payload.get("downloadedUrls", 0) or 0),
             output_count=int(payload.get("outputCount", 0) or 0),
+            correction_count=int(payload.get("correctionCount", 0) or 0),
+            total_input_tokens=int(payload.get("totalInputTokens", 0) or 0),
+            total_tokens_generated=int(payload.get("totalTokensGenerated", 0) or 0),
+            total_tokens=int(payload.get("totalTokens", 0) or 0),
             retries=int(payload.get("retries", 0) or 0),
             parent_job_id=payload.get("parentJobId"),
             cancel_requested=bool(payload.get("cancelRequested", False)),
@@ -368,7 +380,14 @@ class JobQueueManager:
                 self._raise_if_cancel_requested(job_id)
                 result = run_consistency_for_course(source_dir, Path(config["output_dir"]), folder, config, WORKSPACE_DIR)
                 self.record_line(job_id, f"Consistency analysis written to {result['analysis_docx']}")
-                self._set_job_state(job_id, output_count=1)
+                self._set_job_state(
+                    job_id,
+                    output_count=1,
+                    correction_count=0,
+                    total_input_tokens=0,
+                    total_tokens_generated=0,
+                    total_tokens=0,
+                )
                 return
 
             files_to_process = list_processable_files(source_dir)
@@ -386,7 +405,7 @@ class JobQueueManager:
 
             self.record_line(job_id, f"Processing {len(files_to_process)} file(s)")
             self._raise_if_cancel_requested(job_id)
-            process_files(
+            run_result = process_files(
                 files_to_process,
                 config,
                 client,
@@ -395,8 +414,21 @@ class JobQueueManager:
                 cleanup_source_mhtml=True,
                 should_cancel=lambda: self._cancel_requested(job_id),
             )
+
+            correction_count = int((run_result or {}).get("correctionCount", 0) or 0)
+            total_input_tokens = int((run_result or {}).get("totalInputTokens", 0) or 0)
+            total_tokens_generated = int((run_result or {}).get("totalTokensGenerated", 0) or 0)
+            total_tokens = total_input_tokens + total_tokens_generated
+
             output_count = sum(1 for path in output_dir.rglob("*") if path.is_file())
-            self._set_job_state(job_id, output_count=output_count)
+            self._set_job_state(
+                job_id,
+                output_count=output_count,
+                correction_count=correction_count,
+                total_input_tokens=total_input_tokens,
+                total_tokens_generated=total_tokens_generated,
+                total_tokens=total_tokens,
+            )
 
     def _restore_state(self) -> None:
         if not JOB_HISTORY_PATH.exists():

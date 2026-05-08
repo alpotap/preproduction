@@ -485,3 +485,5 @@ def process_files(
 
     if canceled_error is not None:
         raise canceled_error
+
+    return run_record

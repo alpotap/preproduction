@@ -174,6 +174,15 @@ Returns latest-first job list.
 Response fields:
 - jobs[]
 
+Each job record includes:
+- processedFiles
+- downloadedUrls
+- correctionCount (total corrections across all files in the job)
+- totalInputTokens
+- totalTokensGenerated
+- totalTokens (input + generated)
+- outputCount (legacy total files currently present in output folder)
+
 ### POST /api/jobs/{job_id}/cancel
 
 Cancel behavior:

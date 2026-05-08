@@ -107,6 +107,7 @@ Monitors all running and historical jobs (last 20 shown):
 - **Current Run** — shows active job and status message.
 - **Logs** — live tail of execution, performance, or raw LLM logs (10 visible lines, scrollable).
 - **Queue** — compact list with Cancel (queued/running) and Retry (failed/canceled/completed) buttons.
+	- Shows files/URLs plus total corrections and token usage per job: input, output, and combined tokens.
 
 Queue state is saved to `output/web_job_history.json`. Queued jobs survive server restarts.
 

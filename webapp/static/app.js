@@ -86,6 +86,12 @@ function formatDuration(startValue, endValue) {
   return `${remaining}s`;
 }
 
+function formatCount(value) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return '0';
+  return parsed.toLocaleString();
+}
+
 function fileIconClass(extension) {
   const ext = (extension || '').replace('.', '').toLowerCase();
   if (['docx'].includes(ext)) return 'docx';
@@ -503,7 +509,10 @@ async function refreshJobs() {
     const detailTokens = [];
     if (job.processedFiles) detailTokens.push(`${job.processedFiles} files`);
     if (job.downloadedUrls) detailTokens.push(`${job.downloadedUrls} urls`);
-    if (job.outputCount) detailTokens.push(`${job.outputCount} outputs`);
+    if (job.correctionCount) detailTokens.push(`${formatCount(job.correctionCount)} corrections`);
+    if (job.totalInputTokens) detailTokens.push(`in ${formatCount(job.totalInputTokens)} tok`);
+    if (job.totalTokensGenerated) detailTokens.push(`out ${formatCount(job.totalTokensGenerated)} tok`);
+    if (job.totalTokens) detailTokens.push(`total ${formatCount(job.totalTokens)} tok`);
     const duration = formatDuration(job.startedAt, job.finishedAt);
     if (duration) detailTokens.push(`time ${duration}`);
 
