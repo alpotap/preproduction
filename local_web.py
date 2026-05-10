@@ -16,7 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from toolkit.utils import load_config, save_config
-from toolkit.engine import hydrate_runtime_config, PROMPT_DEFINITIONS
+from toolkit.engine import hydrate_runtime_config
+from toolkit.prompts import get_selectable_prompt_definitions
 from toolkit.output_types import OUTPUT_TYPE_REGISTRY, normalize_output_types, serialize_output_types
 from toolkit.providers import (
     OLLAMA_PROVIDER,
@@ -102,6 +103,15 @@ def _build_config_updates(
 
 def _build_prompt_details(prompt_definition: dict) -> str:
     details: list[str] = []
+    version = str(prompt_definition.get("version", "")).strip()
+    if version:
+        details.append(f"Version {version}")
+
+    if prompt_definition.get("prompt_category") == "staging":
+        source_key = str(prompt_definition.get("source_prompt_key", "")).strip()
+        if source_key:
+            details.append(f"Staging source: {source_key}")
+
     summary = str(prompt_definition.get("summary", "")).strip()
     if summary:
         details.append(summary)
@@ -189,6 +199,7 @@ def serve_index() -> FileResponse:
 def get_capabilities() -> dict:
     config = hydrate_runtime_config(load_config())
     providers, provider_models = _build_available_providers_and_models(config)
+    selectable_prompts = get_selectable_prompt_definitions()
 
     configured_provider = str(config.get("llm_provider", "")).strip()
     available_provider_keys = [item["key"] for item in providers]
@@ -214,16 +225,18 @@ def get_capabilities() -> dict:
                 "key": key,
                 "abbr": value.get("abbr", ""),
                 "name": value.get("name", key),
+                "version": value.get("version", "1.0"),
                 "summary": value.get("summary", ""),
                 "details": _build_prompt_details(value),
                 "category": value.get("prompt_category", "copy_editing"),
             }
-            for key, value in PROMPT_DEFINITIONS.items()
+            for key, value in selectable_prompts.items()
         ],
         "promptCategories": [
             {"key": "copy_editing", "label": "Copy Editing"},
             {"key": "document_analysis", "label": "Document Analysis"},
             {"key": "multi_document_analysis", "label": "Multi-Document Analysis"},
+            {"key": "staging", "label": "Staging"},
         ],
         "outputTypes": [
             {

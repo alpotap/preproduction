@@ -58,6 +58,16 @@ Notes:
 - Summary report artifacts (`summary_report_state.json` and `summary_report.docx`) are generated automatically from execution statistics and do not require additional configuration keys.
 - CLI and web both persist provider/model/prompt/output-type defaults into this shared section, so choices apply across browser sessions and users on the same host.
 - Invisible Unicode whitespace (non-breaking spaces, zero-width characters, etc.) in source documents is automatically normalized before LLM analysis. This is transparent and requires no configuration.
+- Correction sanitation blocks duplicate terminal punctuation artifacts (for example `..`) during list-item period augmentation and application.
+- Prompt templates include explicit versions (`version`, baseline `1.0`) and are loaded from `prompts/prod` and `prompts/staging`.
+- Preferred authoring format is `*.prompt.md` (metadata header + prompt text body).
+- Startup automatically regenerates prompt JSON artifacts from markdown.
+- Prompt category labels are for selection/grouping and do not change processing mode by themselves.
+- Promotion from staging to production is manual by copying a prompt file from `prompts/staging` to `prompts/prod`.
+- If multiple production versions exist in one lineage, only the latest production version is exposed in user selection lists.
+- Markdown files are the source of truth for prompt edits.
+- Staging markdown filenames are normalized to include the version suffix automatically.
+- Prompt names exposed to CLI/web selection include version in the display name.
 
 ## Windows service configuration
 

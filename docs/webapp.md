@@ -89,6 +89,17 @@ Step-by-step job submission:
 5. Choose prompt, provider, model, and output types.
 6. Click **Add Job To Queue**.
 
+Prompt notes:
+- Prompt lists include versioned entries (baseline `1.0`).
+- Prompt catalogs are loaded from `prompts/prod` and `prompts/staging`.
+- Human-readable prompt editing uses `.prompt.md` files.
+- Startup automatically regenerates matching JSON prompt files from markdown.
+- A `Staging` prompt category is available for testing prompt variants before promoting to production by manual file copy.
+- If multiple production versions exist for one prompt lineage, only the latest production version is shown for selection.
+- Markdown files are the source of truth for prompt edits.
+- Staging markdown filenames are normalized with version suffixes (example: `default_v1_1.prompt.md`) for easier editing.
+- Prompt labels in dropdowns include version in the prompt name.
+
 Provider/model/prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
 Provider choices in the wizard are filtered to configured and reachable providers only. For example, Ollama is hidden when no Ollama models are available on that server.
 Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
@@ -96,6 +107,7 @@ Azure AI Foundry provider entries are also grouped by configured vendor category
 ## Hidden Whitespace Handling
 
 The tool automatically detects and normalizes invisible Unicode whitespace characters in source documents before analysis. This prevents false-positive corrections when spacing is visually correct but hidden characters are present. Normalized text is used during LLM analysis, and corrections caused purely by invisible whitespace are dropped automatically.
+Correction sanitation also blocks duplicate terminal punctuation artifacts during list-item punctuation fixes so outputs do not gain trailing `..`.
 
 For process jobs, each completed run also updates:
 - `output/<folder>/summary_report_state.json` (historical execution stats)

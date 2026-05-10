@@ -27,12 +27,18 @@ Response fields:
 - config.llmModel
 - config.activePrompt
 - config.outputTypes
-- prompts[] with key, name, summary
+- prompts[] with key, name, version, summary, details, category
+- promptCategories[] including `copy_editing`, `document_analysis`, `multi_document_analysis`, `staging`
 - outputTypes[] with key, label, suffix
 - providers[] with key, label (only providers with configured/available model options)
 
 Notes:
 - Azure AI Foundry can expose multiple provider keys when vendor categories are configured, for example `azure_ai_foundry` and `foundry_vendor_openai`.
+- Prompt list behavior: only the latest production version in each lineage is returned for user selection, while all staging prompts are returned under the `staging` category.
+- Prompt catalogs are edited in `*.prompt.md`, and matching `*.json` artifacts are generated automatically on startup/reload.
+- Prompt `name` values include version in display text for user-facing selection surfaces.
+- Staging prompt markdown filenames are normalized with version suffixes during reload.
+- Correction sanitation in processing paths blocks duplicate terminal punctuation artifacts (for example `..`) when list-item period fixes are augmented and applied.
 
 ### GET /api/models?provider=<provider_key>
 

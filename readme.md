@@ -91,6 +91,26 @@ py setup_foundry_env.py
 
 The setup wizard now supports listing configured models, add/edit/remove flows, vendor categories, and an inline model connectivity test.
 
+## Prompt Staging and Versioning
+
+- Prompt templates are loaded from filesystem catalogs:
+	- Preferred (human-editable): `prompts/prod/*.prompt.md` and `prompts/staging/*.prompt.md`
+	- Startup-generated runtime artifacts: `prompts/generated/prod/*.json` and `prompts/generated/staging/*.json`
+- Every prompt now includes `version`, with current default `1.0`.
+- A `staging` prompt category is loaded from `prompts/staging` for safe testing.
+- `prompt_category` is for selection/grouping only; runtime behavior is controlled by prompt metadata such as `output_mode`.
+- Promotion is manual by file copy from `prompts/staging` to `prompts/prod`.
+- When multiple production versions exist in one prompt lineage, user selection surfaces show only the latest production version.
+
+Prompt authoring workflow:
+
+- Edit prompt files directly in `*.prompt.md` format (simple metadata header + plain-text prompt body).
+- Markdown files are the source of truth.
+- On startup/reload, the app automatically generates matching `.json` prompt files into `prompts/generated/` so runtime components always have current JSON artifacts without cluttering authoring folders.
+- Staging prompt markdown filenames are automatically normalized to include explicit versions (example: `default_v1_1.prompt.md`) so copied variants stay easy to identify and edit.
+- Prompt labels shown in CLI and web include version in the prompt name.
+- Runtime sanitation now blocks duplicate terminal punctuation artifacts (for example `..`) when list-item period fixes are augmented/applied.
+
 ## Where Files Go
 
 The input/output roots come from `paths.json`.
@@ -124,11 +144,11 @@ Provider, model, prompt, and output type defaults are shared across CLI and web 
 Language: en-US
 Highlight Corrections: true
 Add Comments: true
-Active Prompt: default
+Active Prompt: staging::default_v1_2
 LLM Provider: azure_ai_foundry
 LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: inline, uncommented, track_changes, hybrid
+Output Types: uncommented, hybrid

@@ -15,6 +15,7 @@ from toolkit.providers import (
     fetch_lm_studio_models,
     format_model_label,
 )
+from toolkit.prompts import get_selectable_prompt_definitions
 from toolkit.engine import (
     PROMPT_DEFINITIONS,
     DEFAULT_PROMPT_KEY,
@@ -173,8 +174,10 @@ def prompt_select_prompt_type(current_prompt_key):
     """Let the user select the prompt type shown by name and summary."""
     print("\n--- Prompt Type ---")
 
-    options = list(PROMPT_DEFINITIONS.items())
+    options = list(get_selectable_prompt_definitions().items())
     default_key = normalize_prompt_key(current_prompt_key)
+    if options and default_key not in {key for key, _meta in options}:
+        default_key = options[0][0]
     default_meta = PROMPT_DEFINITIONS.get(default_key, {})
     default_label = default_meta.get("name", default_key)
 

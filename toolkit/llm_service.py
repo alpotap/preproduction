@@ -54,6 +54,15 @@ def _is_missing_period_fix(original: str, corrected: str) -> bool:
     return (original or "").rstrip() + "." == (corrected or "").rstrip()
 
 
+def _append_terminal_period_once(value: str) -> str:
+    stripped = (value or "").rstrip()
+    if not stripped:
+        return stripped
+    if _last_non_space_char(stripped) in ".?!,:;":
+        return stripped
+    return stripped + "."
+
+
 def _normalize_hidden_whitespace_for_comparison(text: str) -> str:
     """Normalize invisible Unicode whitespace for comparison purposes only.
     
@@ -135,6 +144,11 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
     added_missing_period_entries = 0
     if detected_missing_period_issue:
         existing_originals = {item.get("original", "") for item in sanitized}
+        existing_missing_period_fixes = {
+            _normalize_space(item.get("original", ""))
+            for item in sanitized
+            if _is_missing_period_fix(item.get("original", ""), item.get("corrected", ""))
+        }
         for line in text.splitlines():
             if not _looks_like_bullet_or_option_line(line):
                 continue
@@ -142,14 +156,21 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
                 continue
             if line in existing_originals:
                 continue
+            normalized_line = _normalize_space(line)
+            if normalized_line in existing_missing_period_fixes:
+                continue
+            corrected_line = _append_terminal_period_once(line)
+            if corrected_line == line.rstrip():
+                continue
             sanitized.append(
                 {
                     "explanation": "Missing sentence-ending period in list item.",
                     "original": line,
-                    "corrected": line.rstrip() + ".",
+                    "corrected": corrected_line,
                 }
             )
             existing_originals.add(line)
+            existing_missing_period_fixes.add(normalized_line)
             added_missing_period_entries += 1
 
     return sanitized, dropped_terminal_downgrades, added_missing_period_entries, dropped_hidden_whitespace_noops

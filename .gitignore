@@ -6,4 +6,5 @@ output/
 .env.*
 toolkit/web_spell_checker.py
 toolkit/run_all_models.py
+prompts/generated/
 !.env.example

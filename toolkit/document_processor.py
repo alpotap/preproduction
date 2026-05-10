@@ -234,6 +234,34 @@ def _correction_sort_key(block_content, correction):
     return fallback if fallback >= 0 else len(block_content)
 
 
+def _has_duplicate_terminal_punctuation(text):
+    stripped = (text or "").rstrip()
+    if len(stripped) < 2:
+        return False
+    return stripped[-1] in ".?!" and stripped[-1] == stripped[-2]
+
+
+def _would_duplicate_terminal_punctuation(block_content, start, original, corrected):
+    corrected_stripped = (corrected or "").rstrip()
+    if not corrected_stripped:
+        return False
+
+    if _has_duplicate_terminal_punctuation(corrected_stripped):
+        original_stripped = (original or "").rstrip()
+        if not _has_duplicate_terminal_punctuation(original_stripped):
+            return True
+
+    terminal = corrected_stripped[-1]
+    if terminal not in ".?!":
+        return False
+
+    boundary_index = start + len(original or "")
+    if boundary_index >= len(block_content):
+        return False
+
+    return block_content[boundary_index] == terminal
+
+
 def _filter_corrections_for_block(block_content, corrections):
     """Return only corrections that apply to one paragraph/block of text.
 
@@ -266,6 +294,13 @@ def _filter_corrections_for_block(block_content, corrections):
         for occurrence_start in occurrence_starts:
             for edit in atomic_edits:
                 preferred_start = occurrence_start + edit['relative_start']
+                if _would_duplicate_terminal_punctuation(
+                    block_content,
+                    preferred_start,
+                    edit['original'],
+                    edit['corrected'],
+                ):
+                    continue
                 entry = {
                     'explanation': explanation,
                     'original': edit['original'],

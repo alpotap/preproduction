@@ -1,298 +1,370 @@
-"""Defines prompt templates and metadata used by document processing workflows."""
+"""Loads prompt templates and metadata from filesystem-backed prompt catalogs."""
 
-# Shared components for prompts
-CONSTRAINTS = """
-Strict Constraints:
-• DO NOT rewrite, rephrase, expand, or change meaning.
-• DO NOT change sentence-ending punctuation (periods, question marks, exclamation points) to other punctuation marks like commas.
-• DO NOT alter punctuation in ways that create grammatical errors (comma splices, fragments, etc.).
-• PRESERVE terminal punctuation for each sentence and list item unless a true grammar correction requires changing the full sentence.
-• PRESERVE abbreviations, proper nouns, and technical terms (e.g., "/opt", "/usr/bin", "API key", "localhost").
-• NO anthropomorphic language."""
-
-JSON_OUTPUT_INSTRUCTIONS = """
-Output ONLY a JSON list of objects. 
-Example: [{{"explanation": "reason", "original": "text", "corrected": "text"}}].
-Return [] if no errors."""
+import json
+import re
+from pathlib import Path
 
 DEFAULT_PROMPT_KEY = "default"
-
-PROMPT_DEFINITIONS = {
-    "default": {
-        "name": "Full Copy Edit",
-        "abbr": "FCE",
-        "prompt_category": "copy_editing",
-        "summary": "Checks spelling, grammar, punctuation, voice, and clarity while preserving meaning.",
-        "max_input_words": 500,
-        "template": f"""
-You are a professional copy editor. Your task is to thoroughly review every sentence of the following {{language}} text and apply corrections based on Microsoft Style Guide principles.
-
-Review each sentence for ALL of the following — do not skip any category:
-• Spelling errors (including typos, wrong word forms)
-• Grammar errors (subject-verb agreement, tense consistency, missing or extra words)
-• Punctuation errors (missing commas, incorrect apostrophes, double spaces)
-• Active voice where passive voice weakens clarity
-• Awkward phrasing that can be made clearer without changing meaning
-• Report every individual occurrence of an error separately — do not deduplicate or group repeated issues
-• If multiple list items share the same punctuation issue, report each affected item separately
-{CONSTRAINTS}
-{JSON_OUTPUT_INSTRUCTIONS}
-
-Text: {{text}}
-""",
-    },
-    "grammar_only": {
-        "name": "Grammar And Mechanics",
-        "abbr": "SaG",
-        "prompt_category": "copy_editing",
-        "summary": "Checks spelling, grammar, and punctuation only; avoids style rewrites.",
-        "max_input_words": 500,
-        "template": f"""
-You are a professional copy editor. Carefully check every sentence of the following {{language}} text for spelling, grammar, and punctuation errors.
-
-Review each sentence for ALL of the following — do not skip any category:
-• Spelling errors (including typos and wrong word forms)
-• Grammar errors (subject-verb agreement, tense, missing or extra words)
-• Punctuation errors (missing commas, incorrect apostrophes, double spaces)
-• Report every individual occurrence of an error separately — do not deduplicate or group repeated issues
-• If multiple list items share the same punctuation issue, report each affected item separately
-Do not suggest stylistic changes or voice changes.
-{CONSTRAINTS}
-{JSON_OUTPUT_INSTRUCTIONS}
-
-Text: {{text}}
-""",
-    },
-    "paragraph_rewrite": {
-        "name": "Paragraph Revision",
-        "abbr": "PR",
-        "prompt_category": "copy_editing",
-        "summary": "Analyzes text and rewrites full paragraphs when broader changes are needed for clarity or correctness.",
-        "max_input_words": 1200,
-        "template": f"""
-You are a professional copy editor. Review the following {{language}} text and improve it when sentence-level edits are not enough.
-
-Tasks:
-• Analyze the text for grammar, punctuation, clarity, structure, and paragraph-level flow issues.
-• When needed, rewrite the full paragraph instead of proposing only small phrase edits.
-• Prefer minimal corrections when they are sufficient, but allow full paragraph replacement when it produces a clearly better result.
-
-Strict Constraints:
-• PRESERVE technical meaning, product names, acronyms, and commands exactly unless they are clearly incorrect.
-• DO NOT invent new facts.
-• DO NOT expand content beyond what is needed to improve correctness or clarity.
-• Return paragraph-level replacements only when justified.
-• NO anthropomorphic language.
-
-{JSON_OUTPUT_INSTRUCTIONS}
-
-Text: {{text}}
-""",
-    },
-    "redundancy_analysis": {
-        "name": "Redundancy Analysis",
-        "abbr": "RA",
-        "prompt_category": "document_analysis",
-        "summary": "Finds repeated or redundant paragraphs and proposes concise alternatives.",
-        "max_input_words": 100000,
-        "template": f"""
-You are a document quality analyst. Review the following {{language}} text and identify redundancy issues.
-
-Return only actionable edits as JSON objects with fields:
-- explanation: why this paragraph/sentence is redundant
-- original: exact redundant text span from input
-- corrected: concise replacement text (or empty string if removal is best)
-
-Do not invent content. Preserve technical terms and meaning.
-{JSON_OUTPUT_INSTRUCTIONS}
-
-Text: {{text}}
-""",
-    },
-    "terminology_consistency": {
-        "name": "Terminology Consistency Validation",
-        "abbr": "TCV",
-        "prompt_category": "multi_document_analysis",
-        "summary": "Identifies inconsistent usage of defined terms, acronyms, and named entities across the document and aligns them to a single existing form.",
-        "max_input_words": 15000,
-        "template": """You are a terminology consistency reviewer. Analyze the following {language} text to identify inconsistent usage of terms, acronyms, product names, or technical entities that refer to the same concept.
-
-Tasks:
-• Detect multiple variants of the same term (e.g., acronym vs spelled-out form, capitalization differences).
-• Determine whether one variant is used as the primary form in the document.
-• Propose corrections that align inconsistent usages to an existing form already present in the text.
-• Report every individual occurrence of an inconsistent term separately — do not deduplicate or group repeated instances.
-
-Strict Constraints:
-• DO NOT invent new terms or terminology.
-• DO NOT rewrite sentences beyond the minimal change required for consistency.
-• PRESERVE technical meaning, abbreviations, and proper nouns exactly.
-• NO stylistic or grammatical rewrites unless required solely for consistency.
-• NO anthropomorphic language.
-
-Output ONLY a JSON list of objects.
-Each object must include:
-- explanation: why the usage is inconsistent
-- original: the exact text span with inconsistent usage
-- corrected: the aligned replacement using an existing variant
-
-Return [] if no issues are found.
-
-Text: {text}""",
-    },
-    "structural_integrity": {
-        "name": "Structural Integrity Validation",
-        "abbr": "SIV",
-        "prompt_category": "document_analysis",
-        "summary": "Validates heading hierarchy, section ordering, and overall document structure for logical and organizational correctness.",
-        "max_input_words": 60000,
-        "template": """You are a document structure validator. Examine the following {language} document for structural integrity issues.
-
-Tasks:
-• Verify correct heading hierarchy (e.g., no skipped levels such as jumping from H1 to H3).
-• Identify orphaned or empty sections.
-• Detect missing required sections or illogical section ordering.
-• Ensure section titles accurately reflect their contents at a high level.
-
-Strict Constraints:
-• DO NOT rewrite or rephrase content.
-• DO NOT propose new sections unless they are clearly missing based on existing structure.
-• DO NOT change wording inside sections.
-• NO anthropomorphic language.
-
-Output ONLY a JSON list of objects.
-Each object must include:
-- explanation: description of the structural issue
-- original: the exact heading or structural element involved
-- corrected: a minimal structural correction suggestion (or empty string if manual author decision is required)
-
-Return [] if no issues are found.
-
-Text: {text}""",
-    },
-    "cross_reference_validation": {
-        "name": "Cross-Reference and Citation Validation",
-        "abbr": "CRV",
-        "prompt_category": "multi_document_analysis",
-        "summary": "Checks internal references, citations, and section links for existence, correctness, and consistency within the document.",
-        "max_input_words": 80000,
-        "template": """You are an internal cross-reference validator. Review the following {language} document and validate all internal references.
-
-Tasks:
-• Verify that all referenced sections, figures, tables, or appendices exist.
-• Detect broken, missing, or mismatched references (e.g., incorrect numbering or naming).
-• Identify references whose targets have been renamed or removed.
-
-Strict Constraints:
-• DO NOT invent new references or targets.
-• DO NOT correct content beyond resolving reference mismatches.
-• DO NOT rewrite prose.
-• NO anthropomorphic language.
-
-Output ONLY a JSON list of objects.
-Each object must include:
-- explanation: description of the reference issue
-- original: the exact reference text as written
-- corrected: the corrected reference text, or empty string if the target cannot be determined
-
-Return [] if no issues are found.
-
-Text: {text}""",
-    },
-    "audience_tone_alignment": {
-        "name": "Audience and Tone Alignment Check",
-        "abbr": "ATA",
-        "prompt_category": "document_analysis",
-        "summary": "Identifies sections whose tone, register, or terminology does not match the intended audience or document purpose.",
-        "max_input_words": 8000,
-        "template": """You are an audience and tone alignment reviewer. Evaluate the following {language} text to determine whether the tone and register are consistent with the intended audience and document purpose.
-
-Tasks:
-• Identify sections that are overly informal, overly technical, or mismatched to the target audience.
-• Detect inconsistent tone shifts across sections.
-• Highlight jargon usage that may be inappropriate for the stated audience.
-
-Strict Constraints:
-• DO NOT rewrite or rephrase text.
-• DO NOT suggest stylistic improvements unless identifying a mismatch.
-• Provide observations only; corrections may be indications rather than replacements.
-• NO anthropomorphic language.
-
-Output ONLY a JSON list of objects.
-Each object must include:
-- explanation: description of the tone or audience mismatch
-- original: the exact text span exhibiting the issue
-- corrected: empty string unless a minimal, audience-aligned alternative is explicitly implied by surrounding text
-
-Return [] if no issues are found.
-
-Text: {text}""",
-    },
-    "generate_summary": {
-        "name": "Generate Module Summary (Single File)",
-        "abbr": "SUM",
-        "prompt_category": "document_analysis",
-        "output_mode": "prepend_text",
-        "summary": "Generates a learner-focused completion summary using structured training language and prepends it to the top of the document.",
-        "max_input_words": 60000,
-        "template": """You are an instructional content specialist. Read the following {language} chapter and write a module-completion summary for students who just finished the module.
-
-Write the summary to match this structure, tone, and intent:
-- Begin with "You have".
-- Use one polished paragraph that describes what learners learned and what concepts were covered.
-- Use coordinated clauses in this style where appropriate: "how...", "why...", "reviewed...", "explored...", "examined...", "learned...".
-- Keep the tone professional, instructional, and learner-facing.
-- Explicitly connect learning outcomes to day-to-day effectiveness.
-- End the paragraph with a sentence in this style: "These concepts help ... in Service Request Management."
-- Keep the paragraph concise (about 4-6 sentences).
-
-After the paragraph, add this exact line on a new line:
-Below is your module completion status and test score achieved in this module:
-
-Output only the summary text and the required final line. Do not include JSON, code blocks, headings, labels, or additional commentary.
-
-Text: {text}""",
-    },
-    "generate_course_summary": {
-        "name": "Full Course Summary (multiple documents)",
-        "abbr": "CSM",
-        "prompt_category": "multi_document_analysis",
-        "output_mode": "course_summary",
-        "summary": "Analyzes all course documents in a folder and generates a full-page course overview including intended audience, course length estimate, description, and learning objectives.",
-        "max_input_words": 150000,
-        "max_tokens_override": 2000,
-        "template": """You are a curriculum analyst writing a professional course description for a learning catalog.
-
-Using the course structure data below, write a complete course overview in exactly this format. Output the four labeled sections below with their exact labels on their own line, followed by the content. Do not add any other text, headers, or formatting.
-
-[COURSE DESCRIPTION]
-Write 4-6 sentences describing the course. Name the product, platform, or domain. Describe what workflows and tasks are covered. Explain how the modules connect and build on each other. State what the learner will be able to do by the end.
-
-[INTENDED AUDIENCE]
-Write 2-3 sentences describing who this course is for. Include inferred job roles, assumed prior knowledge, and the operational context learners come from.
-
-[COURSE LENGTH]
-Write 1-2 sentences estimating the time commitment. Base this on the number of modules found and depth of the content. Example: "This course consists of 15 modules and is estimated to take approximately 6-8 hours to complete."
-
-[LEARNING OBJECTIVES]
-Write exactly 12 action-oriented learning objectives, one per line, each starting with a bullet •. Use active verbs: navigate, configure, create, manage, classify, resolve, analyze, identify, apply, distinguish, generate, link. Each objective is one complete sentence describing a practical skill.
-
-Course Structure:
-{text}""",
-    },
+PROMPT_VERSION_DEFAULT = "1.0"
+STAGING_PROMPT_CATEGORY = "staging"
+STAGING_KEY_PREFIX = "staging::"
+PROMPT_MARKDOWN_SUFFIX = ".prompt.md"
+PROMPT_FILE_PRIORITY = {
+    PROMPT_MARKDOWN_SUFFIX: 2,
+    ".json": 1,
 }
 
-PROMPTS = {
-    key: definition["template"]
-    for key, definition in PROMPT_DEFINITIONS.items()
-}
+PROMPTS_ROOT = Path(__file__).resolve().parent.parent / "prompts"
+PROD_PROMPTS_DIR = PROMPTS_ROOT / "prod"
+STAGING_PROMPTS_DIR = PROMPTS_ROOT / "staging"
+GENERATED_PROMPTS_DIR = PROMPTS_ROOT / "generated"
+GENERATED_PROD_PROMPTS_DIR = GENERATED_PROMPTS_DIR / "prod"
+GENERATED_STAGING_PROMPTS_DIR = GENERATED_PROMPTS_DIR / "staging"
+
+
+def _canonical_prompt_key_with_version(prompt_key, version):
+    lineage = _lineage_key(prompt_key)
+    major_raw, minor_raw = _sanitize_version(version).split(".", 1)
+    return f"{lineage}_v{int(major_raw)}_{int(minor_raw)}"
+
+
+def _list_prompt_markdown_files(directory):
+    if not directory.exists():
+        return []
+
+    files = []
+    for file_path in sorted(directory.iterdir()):
+        if not file_path.is_file():
+            continue
+        name = file_path.name
+        lower_name = name.lower()
+        if lower_name == "readme.md":
+            continue
+        if name.endswith(PROMPT_MARKDOWN_SUFFIX):
+            files.append(file_path)
+            continue
+        if re.match(r"^.+\.prompt[ _-]\d+(?:[._]\d+)?\.md$", name):
+            files.append(file_path)
+    return files
+
+
+def _serialize_prompt_json_payload(file_key, payload):
+    json_payload = dict(payload)
+    template = str(json_payload.get("template") or "")
+    if not template.strip():
+        raise ValueError("Prompt template is required")
+    json_payload["template"] = template.rstrip() + "\n"
+    json_payload["key"] = file_key
+    return json_payload
+
+
+def _sync_markdown_to_json_directory(source_directory, target_directory):
+    if not source_directory.exists():
+        return 0
+
+    target_directory.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    rename_count = 0
+    markdown_files = _list_prompt_markdown_files(source_directory)
+    for md_path in markdown_files:
+        file_key = _prompt_key_from_path(md_path)
+        payload = _load_prompt_markdown(md_path)
+
+        if source_directory == STAGING_PROMPTS_DIR:
+            canonical_key = _canonical_prompt_key_with_version(file_key, payload.get("version"))
+            canonical_path = source_directory / f"{canonical_key}{PROMPT_MARKDOWN_SUFFIX}"
+            if md_path != canonical_path:
+                md_path.replace(canonical_path)
+                md_path = canonical_path
+                file_key = canonical_key
+                rename_count += 1
+
+        json_payload = _serialize_prompt_json_payload(file_key, payload)
+        json_path = target_directory / f"{file_key}.json"
+        json_text = json.dumps(json_payload, ensure_ascii=False, indent=2) + "\n"
+
+        current_text = ""
+        if json_path.exists():
+            current_text = json_path.read_text(encoding="utf-8")
+        if current_text != json_text:
+            json_path.write_text(json_text, encoding="utf-8")
+            written += 1
+
+    if rename_count:
+        print(f"[prompts] normalized {rename_count} staging filename(s) with explicit versions")
+    return written
+
+
+def sync_markdown_prompts_to_json():
+    """Ensure json prompt artifacts are generated from markdown catalogs."""
+    total_written = _sync_markdown_to_json_directory(PROD_PROMPTS_DIR, GENERATED_PROD_PROMPTS_DIR)
+    total_written += _sync_markdown_to_json_directory(STAGING_PROMPTS_DIR, GENERATED_STAGING_PROMPTS_DIR)
+    return total_written
+
+
+def _sanitize_version(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return PROMPT_VERSION_DEFAULT
+    match = re.match(r"^(\d+)\.(\d+)$", raw)
+    if not match:
+        return PROMPT_VERSION_DEFAULT
+    return f"{int(match.group(1))}.{int(match.group(2))}"
+
+
+def _version_sort_key(version):
+    major_raw, minor_raw = _sanitize_version(version).split(".", 1)
+    return int(major_raw), int(minor_raw)
+
+
+def _version_from_key(prompt_key):
+    key = str(prompt_key or "").strip()
+    for pattern in (r".+__v(?P<major>\d+)(?:[._](?P<minor>\d+))?$", r".+_v(?P<major>\d+)(?:[._](?P<minor>\d+))?$"):
+        match = re.match(pattern, key)
+        if not match:
+            continue
+        major = int(match.group("major"))
+        minor = int(match.group("minor") or 0)
+        return f"{major}.{minor}"
+    return ""
+
+
+def _lineage_key(prompt_key):
+    key = str(prompt_key or "").strip()
+    for pattern in (r"^(?P<base>.+?)__v\d+(?:[._]\d+)?$", r"^(?P<base>.+?)_v\d+(?:[._]\d+)?$"):
+        match = re.match(pattern, key)
+        if match:
+            return match.group("base")
+    return key
+
+
+def _prompt_key_from_path(file_path):
+    file_name = file_path.name
+    if file_name.endswith(PROMPT_MARKDOWN_SUFFIX):
+        return file_name[: -len(PROMPT_MARKDOWN_SUFFIX)]
+
+    match = re.match(r"^(?P<base>.+?)\.prompt[ _-](?P<major>\d+)(?:[._](?P<minor>\d+))?\.md$", file_name)
+    if match:
+        major = int(match.group("major"))
+        minor = int(match.group("minor") or 0)
+        return f"{match.group('base')}_v{major}_{minor}"
+
+    return file_path.stem
+
+
+def _coerce_prompt_metadata(payload):
+    normalized = dict(payload)
+    for int_key in ("max_input_words", "max_tokens_override"):
+        if int_key not in normalized:
+            continue
+        try:
+            normalized[int_key] = int(str(normalized[int_key]).strip())
+        except (TypeError, ValueError):
+            normalized.pop(int_key, None)
+    return normalized
+
+
+def _load_prompt_markdown(file_path):
+    raw_text = file_path.read_text(encoding="utf-8")
+    lines = raw_text.splitlines()
+    if not lines:
+        raise ValueError(f"Prompt file is empty: {file_path}")
+
+    if lines[0].strip() != "---":
+        raise ValueError(f"Prompt markdown front matter must start with '---': {file_path}")
+
+    metadata = {}
+    body_start = None
+    for idx in range(1, len(lines)):
+        line = lines[idx]
+        stripped = line.strip()
+        if stripped == "---":
+            body_start = idx + 1
+            break
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, sep, value = line.partition(":")
+        if not sep:
+            raise ValueError(f"Invalid front matter line '{line}' in {file_path}")
+        metadata[key.strip()] = value.strip()
+
+    if body_start is None:
+        raise ValueError(f"Prompt markdown front matter is not closed in {file_path}")
+
+    template = "\n".join(lines[body_start:]).rstrip()
+    payload = _coerce_prompt_metadata(metadata)
+    payload["template"] = template
+    return payload
+
+
+def _load_prompt_payload(file_path):
+    if file_path.name.endswith(PROMPT_MARKDOWN_SUFFIX):
+        return _load_prompt_markdown(file_path)
+
+    if file_path.suffix.lower() == ".json":
+        payload = json.loads(file_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Prompt file must contain an object: {file_path}")
+        return _coerce_prompt_metadata(payload)
+
+    raise ValueError(f"Unsupported prompt file extension: {file_path}")
+
+
+def _load_prompt_file(file_path, *, is_staging):
+    payload = _load_prompt_payload(file_path)
+
+    # File stem is the source of truth so manual copy/rename promotions do not require JSON edits.
+    file_key = str(_prompt_key_from_path(file_path)).strip()
+    if not file_key:
+        raise ValueError(f"Prompt key is required: {file_path}")
+
+    template = str(payload.get("template") or "")
+    if not template.strip():
+        raise ValueError(f"Prompt template is required: {file_path}")
+
+    definition = dict(payload)
+    parsed_key_version = _version_from_key(file_key)
+    definition["version"] = _sanitize_version(parsed_key_version or definition.get("version"))
+    source_category = str(definition.get("prompt_category", "copy_editing")).strip() or "copy_editing"
+    display_name = str(definition.get("name") or file_key).strip() or file_key
+    if display_name.endswith("(Staging)"):
+        display_name = display_name[: -len("(Staging)")].rstrip()
+
+    version_tag = f"v{definition['version']}"
+    if version_tag.lower() not in display_name.lower():
+        display_name = f"{display_name} {version_tag}".strip()
+
+    if is_staging:
+        display_name = f"{display_name} (Staging)"
+    definition["name"] = display_name
+
+    if is_staging:
+        runtime_key = f"{STAGING_KEY_PREFIX}{file_key}"
+        definition["staging"] = True
+        definition["source_prompt_key"] = file_key
+        definition["source_prompt_category"] = source_category
+        definition["prompt_category"] = STAGING_PROMPT_CATEGORY
+    else:
+        runtime_key = file_key
+        definition["staging"] = False
+        definition["source_prompt_key"] = file_key
+        definition["prompt_category"] = source_category
+
+    return runtime_key, definition
+
+
+def _load_prompt_directory(directory, *, is_staging):
+    catalog = {}
+    if not directory.exists():
+        return catalog
+
+    candidates = {}
+    for file_path in sorted(directory.iterdir()):
+        if not file_path.is_file():
+            continue
+        suffix = PROMPT_MARKDOWN_SUFFIX if file_path.name.endswith(PROMPT_MARKDOWN_SUFFIX) else file_path.suffix.lower()
+        if suffix not in PROMPT_FILE_PRIORITY:
+            continue
+        prompt_key = _prompt_key_from_path(file_path)
+        chosen = candidates.get(prompt_key)
+        if chosen is None or PROMPT_FILE_PRIORITY[suffix] > PROMPT_FILE_PRIORITY[chosen[0]]:
+            candidates[prompt_key] = (suffix, file_path)
+
+    for _suffix, file_path in sorted(candidates.values(), key=lambda item: item[1].name):
+        try:
+            runtime_key, definition = _load_prompt_file(file_path, is_staging=is_staging)
+        except Exception as exc:  # pragma: no cover - defensive path
+            print(f"[!] Skipping invalid prompt file '{file_path}': {exc}")
+            continue
+        catalog[runtime_key] = definition
+    return catalog
+
+
+def _load_prompt_catalog_from_files():
+    prod_catalog = _load_prompt_directory(PROD_PROMPTS_DIR, is_staging=False)
+    staging_catalog = _load_prompt_directory(STAGING_PROMPTS_DIR, is_staging=True)
+    return {**prod_catalog, **staging_catalog}
+
+
+PROMPT_DEFINITIONS = {}
+PROMPTS = {}
+
+
+def reload_prompt_catalog():
+    """Reload prompt catalogs from disk and update shared dictionaries in-place."""
+    synced_count = sync_markdown_prompts_to_json()
+    if synced_count:
+        print(f"[prompts] regenerated {synced_count} json artifact(s) from markdown")
+    loaded = _load_prompt_catalog_from_files()
+    PROMPT_DEFINITIONS.clear()
+    PROMPT_DEFINITIONS.update(loaded)
+
+    PROMPTS.clear()
+    PROMPTS.update(
+        {
+            key: definition["template"]
+            for key, definition in PROMPT_DEFINITIONS.items()
+            if str(definition.get("template") or "").strip()
+        }
+    )
+    return PROMPT_DEFINITIONS
+
+
+reload_prompt_catalog()
+
+
+def get_prompt_definitions_by_category(category_key):
+    """Return prompt entries filtered by prompt_category."""
+    category = str(category_key or "").strip().lower()
+    return {
+        key: definition
+        for key, definition in PROMPT_DEFINITIONS.items()
+        if str(definition.get("prompt_category", "")).strip().lower() == category
+    }
+
+
+def get_selectable_prompt_definitions():
+    """Return latest production versions plus all staging prompts for user selection."""
+    reload_prompt_catalog()
+    latest_by_lineage = {}
+    staging = {}
+
+    for prompt_key, definition in PROMPT_DEFINITIONS.items():
+        category = str(definition.get("prompt_category", "")).strip().lower()
+        if category == STAGING_PROMPT_CATEGORY:
+            staging[prompt_key] = definition
+            continue
+
+        lineage = _lineage_key(definition.get("source_prompt_key") or prompt_key)
+        current = latest_by_lineage.get(lineage)
+        if current is None:
+            latest_by_lineage[lineage] = (prompt_key, definition)
+            continue
+
+        _, current_definition = current
+        if _version_sort_key(definition.get("version")) > _version_sort_key(current_definition.get("version")):
+            latest_by_lineage[lineage] = (prompt_key, definition)
+
+    selectable = {key: definition for key, definition in latest_by_lineage.values()}
+    selectable.update(staging)
+    return dict(sorted(selectable.items(), key=lambda item: item[0]))
 
 
 def get_prompt_definition(prompt_key):
     """Returns prompt metadata for a key, falling back to default prompt."""
+    reload_prompt_catalog()
     if prompt_key in PROMPT_DEFINITIONS:
         return PROMPT_DEFINITIONS[prompt_key]
-    return PROMPT_DEFINITIONS.get(DEFAULT_PROMPT_KEY, {})
+
+    if DEFAULT_PROMPT_KEY in PROMPT_DEFINITIONS:
+        return PROMPT_DEFINITIONS[DEFAULT_PROMPT_KEY]
+
+    if PROMPT_DEFINITIONS:
+        first_key = next(iter(PROMPT_DEFINITIONS.keys()))
+        return PROMPT_DEFINITIONS[first_key]
+
+    return {}
 
 
 def get_prompt_max_input_words(prompt_key, fallback=500):
@@ -319,4 +391,3 @@ def get_prompt_abbreviation(prompt_key, fallback="GEN"):
     if not value:
         return fallback
     return "".join(ch for ch in value if ch.isalnum()) or fallback
-    

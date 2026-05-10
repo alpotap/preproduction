@@ -46,6 +46,7 @@ For unattended web hosting on Windows, use the separate service installer descri
 ## Hidden Whitespace Handling
 
 The tool automatically detects and normalizes invisible Unicode whitespace characters (non-breaking spaces, zero-width characters, etc.) in source documents before analysis. This prevents false-positive corrections like "Missing space before 'dialog'" when the spacing is visually correct but hidden characters are present. Normalized text is used during LLM analysis, and corrections caused purely by invisible whitespace are dropped automatically.
+Correction sanitation also blocks duplicate terminal punctuation artifacts during list-item punctuation fixes so outputs do not gain trailing `..`.
 
 11. **Foundry profile and vendor selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified display names such as `My Editing Model [primary]` and groups provider options by configured vendor category.
 
@@ -83,7 +84,18 @@ The summary report artifacts are always generated automatically and are not part
 
 ## Prompts
 
-Prompts are loaded from `prompts.py`. The active prompt is set by `Active Prompt:` in `readme.md` configuration or overridden per-run in the wizard.
+Prompts are loaded from filesystem catalogs under `prompts/prod` and `prompts/staging`. Human-editable prompt files use `.prompt.md`, and startup automatically regenerates matching `.json` files from markdown. The active prompt is set by `Active Prompt:` in `readme.md` configuration or overridden per-run in the wizard.
+
+Prompt catalog behavior:
+
+- Every prompt has a `version` field (current baseline `1.0`).
+- A `staging` category is loaded from `prompts/staging` for test runs.
+- `prompt_category` controls grouping/selection only. Input handling behavior is not inferred from category; behavior-specific controls use prompt metadata such as `output_mode`.
+- Promotion is manual by copying a prompt file from `prompts/staging` into `prompts/prod`.
+- If multiple production versions exist for one prompt lineage, only the latest production version is shown in selection lists.
+- Markdown files are the source of truth for editing.
+- Staging markdown prompt filenames are normalized to include version suffixes (for example, `default_v1_1.prompt.md`).
+- Prompt names displayed in wizard selections include the version.
 
 | Key | Description |
 |---|---|
