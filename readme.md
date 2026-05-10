@@ -89,6 +89,8 @@ For Azure AI Foundry on Windows, quickest path is:
 py setup_foundry_env.py
 ```
 
+The setup wizard now supports listing configured models, add/edit/remove flows, vendor categories, and an inline model connectivity test.
+
 ## Where Files Go
 
 The input/output roots come from `paths.json`.
@@ -122,7 +124,7 @@ Provider, model, prompt, and output type defaults are shared across CLI and web 
 Language: en-US
 Highlight Corrections: true
 Add Comments: true
-Active Prompt: default
+Active Prompt: generate_summary
 LLM Provider: azure_ai_foundry
 LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1

@@ -110,14 +110,27 @@ If Python launcher is available, this also works:
 py setup_foundry_env.py
 ```
 
-The script asks for only 4 values per AI entry:
+The script opens an interactive menu where you can:
 
-1. Name
-2. API key
-3. API version (default: `2025-01-01-preview`)
-4. Endpoint
+1. List configured models with masked API keys.
+2. Add a model profile.
+3. Edit an existing model profile.
+4. Remove a model profile.
+5. Test a model with a basic API call.
+6. Save to MACHINE-scope environment variables.
 
-It then writes the full Azure AI Foundry environment variable set for you (including profile variables) and loads the values in the current terminal session.
+Model count is unlimited.
+
+Each profile stores:
+
+1. Display name (used in CLI/web lists).
+2. Model/deployment name (used in API calls).
+3. API key.
+4. API version (default: `2025-01-01-preview`).
+5. Endpoint.
+6. Vendor category (for provider grouping in CLI/web).
+
+It then writes the full Azure AI Foundry environment variable set for you (including profile variables and vendor/display metadata) and loads the values in the current terminal session.
 
 The API key is found in the Azure AI Foundry portal under your project → **Settings → API keys**.
 
@@ -136,11 +149,15 @@ $env:AZURE_AI_FOUNDRY_PROFILE_IDS = "primary,secondary"
 $env:AZURE_AI_FOUNDRY_PRIMARY_API_KEY = "<key-1>"
 $env:AZURE_AI_FOUNDRY_PRIMARY_ENDPOINT = "https://resource-one.cognitiveservices.azure.com/"
 $env:AZURE_AI_FOUNDRY_PRIMARY_MODEL_NAME = "gpt-4o-mini"
+$env:AZURE_AI_FOUNDRY_PRIMARY_DISPLAY_NAME = "gpt-4o-mini"
+$env:AZURE_AI_FOUNDRY_PRIMARY_VENDOR = "Azure"
 $env:AZURE_AI_FOUNDRY_PRIMARY_API_VERSION = "2025-01-01-preview"
 
 $env:AZURE_AI_FOUNDRY_SECONDARY_API_KEY = "<key-2>"
 $env:AZURE_AI_FOUNDRY_SECONDARY_ENDPOINT = "https://resource-two.cognitiveservices.azure.com/"
 $env:AZURE_AI_FOUNDRY_SECONDARY_MODEL_NAME = "gpt-4.1-mini"
+$env:AZURE_AI_FOUNDRY_SECONDARY_DISPLAY_NAME = "gpt-4.1-mini"
+$env:AZURE_AI_FOUNDRY_SECONDARY_VENDOR = "Azure"
 $env:AZURE_AI_FOUNDRY_SECONDARY_API_VERSION = "2025-01-01-preview"
 ```
 
@@ -149,14 +166,16 @@ For profile IDs, use letters, numbers, and underscore only.
 ## Verify environment variables
 
 ```powershell
-$profiles = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_PROFILE_IDS", "User")
+$profiles = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_PROFILE_IDS", "Machine")
 Write-Host "Profiles: $profiles"
 
 foreach ($p in ($profiles -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
     $up = $p.ToUpperInvariant()
-    $endpoint = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_ENDPOINT", "User")
-    $model = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_MODEL_NAME", "User")
-    Write-Host ("{0} => model={1}; endpoint={2}" -f $p, $model, $endpoint)
+    $endpoint = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_ENDPOINT", "Machine")
+    $model = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_MODEL_NAME", "Machine")
+    $display = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_DISPLAY_NAME", "Machine")
+    $vendor = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_VENDOR", "Machine")
+    Write-Host ("{0} => display={1}; model={2}; vendor={3}; endpoint={4}" -f $p, $display, $model, $vendor, $endpoint)
 }
 ```
 

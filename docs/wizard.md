@@ -47,7 +47,7 @@ For unattended web hosting on Windows, use the separate service installer descri
 
 The tool automatically detects and normalizes invisible Unicode whitespace characters (non-breaking spaces, zero-width characters, etc.) in source documents before analysis. This prevents false-positive corrections like "Missing space before 'dialog'" when the spacing is visually correct but hidden characters are present. Normalized text is used during LLM analysis, and corrections caused purely by invisible whitespace are dropped automatically.
 
-11. **Foundry profile selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified entries such as `gpt-4o-mini [primary]`.
+11. **Foundry profile and vendor selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified display names such as `My Editing Model [primary]` and groups provider options by configured vendor category.
 
 ## Command-line mode
 

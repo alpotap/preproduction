@@ -31,6 +31,9 @@ Response fields:
 - outputTypes[] with key, label, suffix
 - providers[] with key, label (only providers with configured/available model options)
 
+Notes:
+- Azure AI Foundry can expose multiple provider keys when vendor categories are configured, for example `azure_ai_foundry` and `foundry_vendor_openai`.
+
 ### GET /api/models?provider=<provider_key>
 
 Returns model options for a provider.
@@ -38,7 +41,7 @@ Returns model options for a provider.
 Response fields:
 - models[] where each item is one of:
   - string model ID (Ollama/LM Studio)
-  - object `{ value, label, model_name, profile }` (Azure AI Foundry)
+  - object `{ value, label, model_name, profile, display_name, vendor, provider_key }` (Azure AI Foundry)
 
 ### POST /api/preferences
 
@@ -64,9 +67,9 @@ Returns provider connectivity/config snapshots.
 
 Notes:
 - For `azureAiFoundry`, endpoint/model settings are environment-only.
-- Recommended setup on Windows uses `python setup_foundry_env.py`, which prompts for 4 values per AI entry and writes the required environment variables.
+- Recommended setup on Windows uses `python setup_foundry_env.py`, which provides list/add/edit/remove/test actions and writes the required environment variables.
 - Single-profile mode uses `AZURE_AI_FOUNDRY_API_KEY`, `AZURE_AI_FOUNDRY_ENDPOINT`, `AZURE_AI_FOUNDRY_API_VERSION`, `AZURE_AI_FOUNDRY_MODEL_NAME`.
-- Multi-profile mode uses `AZURE_AI_FOUNDRY_PROFILE_IDS` and per-profile variables (`AZURE_AI_FOUNDRY_<PROFILE>_API_KEY`, `_ENDPOINT`, `_API_VERSION`, `_MODEL_NAME`).
+- Multi-profile mode uses `AZURE_AI_FOUNDRY_PROFILE_IDS` and per-profile variables (`AZURE_AI_FOUNDRY_<PROFILE>_API_KEY`, `_ENDPOINT`, `_API_VERSION`, `_MODEL_NAME`, `_DISPLAY_NAME`, `_VENDOR`).
 
 ## Folder and File Endpoints
 

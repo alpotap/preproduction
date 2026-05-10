@@ -91,6 +91,7 @@ Step-by-step job submission:
 
 Provider/model/prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
 Provider choices in the wizard are filtered to configured and reachable providers only. For example, Ollama is hidden when no Ollama models are available on that server.
+Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
 
 ## Hidden Whitespace Handling
 
@@ -155,11 +156,11 @@ Recommended setup order:
 1. Run `python setup_foundry_env.py` (or configure provider environment variables in [configuration.md](configuration.md)).
 2. Restart the web server.
 3. Open Wizard → Advanced Options and confirm model entries appear.
-4. If using multiple Foundry profiles, select the profile-qualified model entry before queueing a job.
+4. If using multiple Foundry profiles or vendors, select the desired vendor/provider category and profile-qualified model entry before queueing a job.
 
 ## Web UI troubleshooting
 
-- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Re-run `python setup_foundry_env.py` to regenerate profile variables quickly.
+- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Re-run `python setup_foundry_env.py` to regenerate profile variables, display names, and vendor categories quickly.
 - **Azure AI Foundry model calls fail for gpt-4o-mini** — Set `AZURE_AI_FOUNDRY_ENDPOINT` to `https://<resource>.cognitiveservices.azure.com/` and set `AZURE_AI_FOUNDRY_API_VERSION` to a compatible preview (for example `2025-01-01-preview`).
 - **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.

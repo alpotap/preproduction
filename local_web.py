@@ -24,7 +24,7 @@ from toolkit.providers import (
     AZURE_AI_FOUNDRY_PROVIDER,
     fetch_ollama_models,
     fetch_lm_studio_models,
-    get_azure_ai_foundry_settings,
+    get_foundry_provider_catalog,
     get_lm_studio_settings,
 )
 from toolkit.web_jobs import (
@@ -132,17 +132,26 @@ def _build_available_providers_and_models(config: dict) -> tuple[list[dict[str, 
     provider_models: dict[str, list] = {
         OLLAMA_PROVIDER: fetch_ollama_models(),
         LM_STUDIO_PROVIDER: fetch_lm_studio_models(config),
-        AZURE_AI_FOUNDRY_PROVIDER: get_azure_ai_foundry_settings(config).get("model_options", []),
     }
+
+    foundry_catalog = get_foundry_provider_catalog(config)
+    for provider_key, bucket in foundry_catalog.items():
+        provider_models[provider_key] = bucket.get("models", [])
 
     provider_labels = {
         OLLAMA_PROVIDER: "Ollama",
         LM_STUDIO_PROVIDER: "LM Studio",
         AZURE_AI_FOUNDRY_PROVIDER: "Azure AI Foundry",
     }
+    for provider_key, bucket in foundry_catalog.items():
+        provider_labels[provider_key] = bucket.get("label", provider_labels.get(provider_key, provider_key))
+
+    ordered_keys = [OLLAMA_PROVIDER, LM_STUDIO_PROVIDER, AZURE_AI_FOUNDRY_PROVIDER]
+    extra_foundry_keys = sorted([key for key in foundry_catalog.keys() if key != AZURE_AI_FOUNDRY_PROVIDER])
+    ordered_keys.extend(extra_foundry_keys)
     available_providers = [
         {"key": key, "label": provider_labels[key]}
-        for key in (OLLAMA_PROVIDER, LM_STUDIO_PROVIDER, AZURE_AI_FOUNDRY_PROVIDER)
+        for key in ordered_keys
         if provider_models.get(key)
     ]
     return available_providers, provider_models
@@ -232,12 +241,13 @@ def get_capabilities() -> dict:
 def get_models(provider: str = Query(...)) -> dict:
     config = hydrate_runtime_config(load_config())
     provider = provider.strip().lower()
+    foundry_catalog = get_foundry_provider_catalog(config)
     if provider == OLLAMA_PROVIDER:
         models = fetch_ollama_models()
     elif provider == LM_STUDIO_PROVIDER:
         models = fetch_lm_studio_models(config)
-    elif provider == AZURE_AI_FOUNDRY_PROVIDER:
-        models = get_azure_ai_foundry_settings(config).get("model_options", [])
+    elif provider == AZURE_AI_FOUNDRY_PROVIDER or provider in foundry_catalog:
+        models = foundry_catalog.get(provider, {}).get("models", [])
     else:
         raise HTTPException(status_code=400, detail="Unsupported provider")
     return {"models": models}

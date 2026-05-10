@@ -9,7 +9,7 @@ from toolkit.providers import (
     LM_STUDIO_PROVIDER,
     AZURE_AI_FOUNDRY_PROVIDER,
     normalize_provider,
-    get_azure_ai_foundry_settings,
+    get_foundry_provider_catalog,
     get_lm_studio_settings,
     fetch_ollama_models,
     fetch_lm_studio_models,
@@ -87,13 +87,17 @@ def select_model(default_model, default_provider, config):
     options = [(OLLAMA_PROVIDER, model_name) for model_name in ollama_models]
     options.extend((LM_STUDIO_PROVIDER, model_name) for model_name in lm_studio_models)
 
-    foundry_settings = get_azure_ai_foundry_settings(config)
-    foundry_label_map = {
-        item["value"]: item.get("label", item["value"])
-        for item in foundry_settings["model_options"]
-    }
-    for foundry_model in foundry_settings["model_options"]:
-        options.append((AZURE_AI_FOUNDRY_PROVIDER, foundry_model["value"]))
+    foundry_catalog = get_foundry_provider_catalog(config)
+    foundry_label_map = {}
+    foundry_provider_label_map = {}
+    for provider_key, bucket in foundry_catalog.items():
+        foundry_provider_label_map[provider_key] = bucket.get("label", "Azure AI Foundry")
+        for foundry_model in bucket.get("models", []):
+            model_value = foundry_model.get("value", "")
+            if not model_value:
+                continue
+            foundry_label_map[(provider_key, model_value)] = foundry_model.get("label", model_value)
+            options.append((provider_key, model_value))
 
     lm_studio_settings = get_lm_studio_settings(config)
     if lm_studio_models:
@@ -101,7 +105,8 @@ def select_model(default_model, default_provider, config):
     else:
         print(f"LM Studio unavailable or has no loaded model at {lm_studio_settings['base_url']}.")
 
-    if not ollama_models and not lm_studio_models and not foundry_settings["model_options"]:
+    has_foundry_models = any(bucket.get("models") for bucket in foundry_catalog.values())
+    if not ollama_models and not lm_studio_models and not has_foundry_models:
         print("No models found. Ensure Ollama/LM Studio is running and/or configure Azure AI Foundry provider.")
     elif not ollama_models and not lm_studio_models:
         print("No models found in local providers (Ollama/LM Studio). Azure AI Foundry is available if configured.")
@@ -112,9 +117,9 @@ def select_model(default_model, default_provider, config):
         default_index = -1
         normalized_default_provider = normalize_provider(default_provider)
         for index, (provider, model_name) in enumerate(options):
-            if provider == AZURE_AI_FOUNDRY_PROVIDER:
-                provider_label = "Azure AI Foundry"
-                display_model_name = foundry_label_map.get(model_name, model_name)
+            if normalize_provider(provider) == AZURE_AI_FOUNDRY_PROVIDER:
+                provider_label = foundry_provider_label_map.get(provider, "Azure AI Foundry")
+                display_model_name = foundry_label_map.get((provider, model_name), model_name)
             elif provider == LM_STUDIO_PROVIDER:
                 provider_label = "LM Studio"
                 display_model_name = model_name
@@ -122,16 +127,21 @@ def select_model(default_model, default_provider, config):
                 provider_label = "Ollama"
                 display_model_name = model_name
             label = f"{display_model_name} ({provider_label})"
-            if model_name == default_model and provider == normalized_default_provider:
+            provider_matches_default = (
+                provider == default_provider
+                or (provider == AZURE_AI_FOUNDRY_PROVIDER and normalized_default_provider == AZURE_AI_FOUNDRY_PROVIDER)
+            )
+            if model_name == default_model and provider_matches_default:
                 print(f"  {index + 1}: {label} (default)")
                 default_index = index
             else:
                 print(f"  {index + 1}: {label}")
 
         default_label = default_model
-        if normalized_default_provider == AZURE_AI_FOUNDRY_PROVIDER:
-            default_display = foundry_label_map.get(default_model, default_model)
-            default_label = f"{default_display} (Azure AI Foundry)"
+        if normalize_provider(default_provider) == AZURE_AI_FOUNDRY_PROVIDER:
+            default_display = foundry_label_map.get((default_provider, default_model), default_model)
+            provider_label = foundry_provider_label_map.get(default_provider, "Azure AI Foundry")
+            default_label = f"{default_display} ({provider_label})"
         elif normalized_default_provider == LM_STUDIO_PROVIDER:
             default_label = f"{default_model} (LM Studio)"
         elif default_model:
@@ -150,13 +160,13 @@ def select_model(default_model, default_provider, config):
             if 0 <= chosen_index < len(options):
                 return options[chosen_index]
             print("Invalid number. Using default.")
-            return normalized_default_provider, default_model
+            return default_provider, default_model
         except (ValueError, IndexError):
             if selection.strip():
                 print("Invalid input. Using default.")
-            return normalized_default_provider, default_model
+            return default_provider, default_model
     except Exception:
-        return normalize_provider(default_provider), default_model
+        return default_provider, default_model
 
 
 def prompt_select_prompt_type(current_prompt_key):

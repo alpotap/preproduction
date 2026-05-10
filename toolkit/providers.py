@@ -9,6 +9,8 @@ AZURE_AI_FOUNDRY_PROVIDER = "azure_ai_foundry"
 DEFAULT_AZURE_AI_FOUNDRY_API_VERSION = "2025-01-01-preview"
 FOUNDRY_DEFAULT_PROFILE = "default"
 FOUNDRY_MODEL_DELIMITER = "::"
+FOUNDRY_VENDOR_PROVIDER_PREFIX = "foundry_vendor_"
+DEFAULT_FOUNDRY_VENDOR = "azure"
 
 
 def _read_env_var(name):
@@ -31,11 +33,46 @@ def _read_env_var(name):
 def normalize_provider(provider):
     """Normalize persisted provider labels to supported provider keys."""
     provider = (provider or "").strip().lower()
+    if provider.startswith(FOUNDRY_VENDOR_PROVIDER_PREFIX):
+        return AZURE_AI_FOUNDRY_PROVIDER
     if provider.startswith("azure") or provider in {"github", "foundry"}:
         return AZURE_AI_FOUNDRY_PROVIDER
     if provider in {"lm_studio", "lmstudio", "local", "local_lm_studio"}:
         return LM_STUDIO_PROVIDER
     return OLLAMA_PROVIDER
+
+
+def normalize_vendor_id(vendor):
+    """Normalize a vendor category key for provider routing."""
+    raw_vendor = (vendor or "").strip().lower()
+    cleaned = "".join(ch for ch in raw_vendor if ch.isalnum() or ch == "_")
+    return cleaned or DEFAULT_FOUNDRY_VENDOR
+
+
+def provider_key_for_vendor(vendor):
+    """Map Foundry vendor ID to a provider key."""
+    vendor_id = normalize_vendor_id(vendor)
+    if vendor_id == DEFAULT_FOUNDRY_VENDOR:
+        return AZURE_AI_FOUNDRY_PROVIDER
+    return f"{FOUNDRY_VENDOR_PROVIDER_PREFIX}{vendor_id}"
+
+
+def vendor_from_provider_key(provider):
+    """Resolve vendor ID from provider key when it points to Foundry."""
+    raw = (provider or "").strip().lower()
+    if raw == AZURE_AI_FOUNDRY_PROVIDER or raw.startswith("azure") or raw in {"github", "foundry"}:
+        return DEFAULT_FOUNDRY_VENDOR
+    if raw.startswith(FOUNDRY_VENDOR_PROVIDER_PREFIX):
+        return normalize_vendor_id(raw[len(FOUNDRY_VENDOR_PROVIDER_PREFIX) :])
+    return ""
+
+
+def provider_label_for_vendor(vendor_label, vendor_id):
+    """Return a display label for vendor-specific Foundry providers."""
+    if normalize_vendor_id(vendor_id) == DEFAULT_FOUNDRY_VENDOR:
+        return "Azure AI Foundry"
+    normalized_label = (vendor_label or "").strip() or vendor_id
+    return f"Foundry: {normalized_label}"
 
 
 def _normalize_profile_id(raw_profile):
@@ -63,6 +100,9 @@ def _build_legacy_foundry_profile():
         "endpoint": endpoint,
         "api_version": api_version,
         "model_names": model_names,
+        "vendor": DEFAULT_FOUNDRY_VENDOR,
+        "vendor_label": "Azure",
+        "display_names": list(model_names),
     }
 
 
@@ -76,6 +116,14 @@ def _build_profile_entry(profile):
     ).strip()
     raw_models = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_MODEL_NAME")
     model_names = [model.strip() for model in raw_models.split(",") if model.strip()]
+    raw_display_names = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_DISPLAY_NAME")
+    parsed_display_names = [name.strip() for name in raw_display_names.split(",") if name.strip()]
+    display_names = [
+        parsed_display_names[idx] if idx < len(parsed_display_names) else model_name
+        for idx, model_name in enumerate(model_names)
+    ]
+    vendor_label = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_VENDOR") or "Azure"
+    vendor_id = normalize_vendor_id(vendor_label)
     if not api_key or not endpoint or not model_names:
         return None
     return {
@@ -84,6 +132,9 @@ def _build_profile_entry(profile):
         "endpoint": endpoint,
         "api_version": api_version,
         "model_names": model_names,
+        "display_names": display_names,
+        "vendor": vendor_id,
+        "vendor_label": vendor_label,
     }
 
 
@@ -141,6 +192,7 @@ def resolve_model_for_request(provider, configured_model, config):
 def get_azure_ai_foundry_settings(config):
     """Load Azure AI Foundry settings from environment variables, including multi-profile entries."""
     requested_provider = normalize_provider(config.get("llm_provider", ""))
+    requested_vendor = vendor_from_provider_key(config.get("llm_provider", ""))
     requested_profile, requested_model = parse_foundry_model_value(config.get("llm_model", ""))
 
     configured_profiles = _parse_profile_ids()
@@ -156,36 +208,50 @@ def get_azure_ai_foundry_settings(config):
     if legacy_entry and not configured_profiles:
         entries.append(legacy_entry)
 
+    filtered_entries = [
+        entry for entry in entries if not requested_vendor or entry.get("vendor") == normalize_vendor_id(requested_vendor)
+    ]
+    if not filtered_entries and requested_vendor:
+        filtered_entries = entries
+
     selected_entry = None
     selected_model = ""
 
     if requested_provider == AZURE_AI_FOUNDRY_PROVIDER:
         if requested_profile:
-            selected_entry = next((entry for entry in entries if entry["profile"] == requested_profile), None)
+            selected_entry = next((entry for entry in filtered_entries if entry["profile"] == requested_profile), None)
             if selected_entry and requested_model in selected_entry["model_names"]:
                 selected_model = requested_model
         if selected_entry is None and requested_model:
-            for entry in entries:
+            for entry in filtered_entries:
                 if requested_model in entry["model_names"]:
                     selected_entry = entry
                     selected_model = requested_model
                     break
 
-    if selected_entry is None and entries:
-        selected_entry = entries[0]
+    if selected_entry is None and filtered_entries:
+        selected_entry = filtered_entries[0]
     if selected_entry and not selected_model:
         selected_model = selected_entry["model_names"][0] if selected_entry["model_names"] else ""
 
     model_options = []
-    for entry in entries:
-        for model_name in entry["model_names"]:
+    for entry in filtered_entries:
+        provider_key = provider_key_for_vendor(entry.get("vendor"))
+        provider_label = provider_label_for_vendor(entry.get("vendor_label"), entry.get("vendor"))
+        for index, model_name in enumerate(entry["model_names"]):
+            display_name = entry.get("display_names", [])[index] if index < len(entry.get("display_names", [])) else model_name
             label_suffix = "" if entry["profile"] == FOUNDRY_DEFAULT_PROFILE else f" [{entry['profile']}]"
             model_options.append(
                 {
                     "value": encode_foundry_model_value(entry["profile"], model_name),
                     "model_name": model_name,
+                    "display_name": display_name,
                     "profile": entry["profile"],
-                    "label": f"{model_name}{label_suffix}",
+                    "vendor": entry.get("vendor", DEFAULT_FOUNDRY_VENDOR),
+                    "vendor_label": entry.get("vendor_label", "Azure"),
+                    "provider_key": provider_key,
+                    "provider_label": provider_label,
+                    "label": f"{display_name}{label_suffix}",
                 }
             )
 
@@ -197,11 +263,29 @@ def get_azure_ai_foundry_settings(config):
         "model_name": selected_model,
         "model_names": selected_entry["model_names"] if selected_entry else [],
         "model_options": model_options,
-        "entries": entries,
+        "entries": filtered_entries,
         "selected_value": encode_foundry_model_value(selected_entry["profile"], selected_model)
         if selected_entry and selected_model
         else "",
     }
+
+
+def get_foundry_provider_catalog(config):
+    """Return provider buckets for configured Foundry vendors."""
+    settings = get_azure_ai_foundry_settings({**config, "llm_provider": ""})
+    catalog = {}
+    for item in settings.get("model_options", []):
+        provider_key = item.get("provider_key") or AZURE_AI_FOUNDRY_PROVIDER
+        bucket = catalog.setdefault(
+            provider_key,
+            {
+                "key": provider_key,
+                "label": item.get("provider_label") or "Azure AI Foundry",
+                "models": [],
+            },
+        )
+        bucket["models"].append(item)
+    return catalog
 
 
 def _normalize_azure_endpoint(endpoint):
@@ -349,9 +433,10 @@ def format_model_label(model_name, provider):
     normalized_provider = normalize_provider(provider)
     if normalized_provider == AZURE_AI_FOUNDRY_PROVIDER:
         profile, resolved_model = parse_foundry_model_value(model_name)
+        provider_vendor = vendor_from_provider_key(provider)
+        provider_label = provider_label_for_vendor(provider_vendor.capitalize(), provider_vendor) if provider_vendor else "Azure AI Foundry"
         if profile and resolved_model:
             model_name = f"{resolved_model} [{profile}]"
-        provider_label = "Azure AI Foundry"
     elif normalized_provider == LM_STUDIO_PROVIDER:
         provider_label = "LM Studio"
     else:
