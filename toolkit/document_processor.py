@@ -160,6 +160,80 @@ def _collect_all_paragraphs(doc):
     return all_paragraphs
 
 
+def _find_all_indices(text, needle):
+    """Return start indices of all non-overlapping needle matches in text."""
+    indices = []
+    if not needle:
+        return indices
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx == -1:
+            break
+        indices.append(idx)
+        start = idx + max(1, len(needle))
+    return indices
+
+
+def _build_atomic_edits(original, corrected):
+    """Split one sentence-level correction into atomic span edits."""
+    edits = []
+    matcher = difflib.SequenceMatcher(None, original, corrected)
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            continue
+
+        rel_start = i1
+        orig_span = original[i1:i2]
+        corr_span = corrected[j1:j2]
+
+        if tag == 'insert':
+            # Anchor inserts to a neighboring character so they can be located reliably.
+            if i1 > 0:
+                rel_start = i1 - 1
+                anchor = original[rel_start:i1]
+                orig_span = anchor
+                corr_span = anchor + corr_span
+            elif original:
+                rel_start = 0
+                anchor = original[0:1]
+                orig_span = anchor
+                corr_span = corr_span + anchor
+            else:
+                continue
+
+        if not orig_span or orig_span == corr_span:
+            continue
+
+        edits.append(
+            {
+                'relative_start': rel_start,
+                'original': orig_span,
+                'corrected': corr_span,
+            }
+        )
+
+    return edits
+
+
+def _resolve_correction_start(block_content, original, preferred_start, search_start):
+    """Resolve correction start index using an optional preferred offset hint."""
+    if isinstance(preferred_start, int) and preferred_start >= search_start:
+        end = preferred_start + len(original)
+        if block_content[preferred_start:end] == original:
+            return preferred_start
+    return block_content.find(original, search_start)
+
+
+def _correction_sort_key(block_content, correction):
+    preferred_start = correction.get('preferred_start')
+    if isinstance(preferred_start, int) and preferred_start >= 0:
+        return preferred_start
+    fallback = block_content.find(correction.get('original', ''))
+    return fallback if fallback >= 0 else len(block_content)
+
+
 def _filter_corrections_for_block(block_content, corrections):
     """Return only corrections that apply to one paragraph/block of text.
 
@@ -168,13 +242,47 @@ def _filter_corrections_for_block(block_content, corrections):
     multiple times) is marked, not just the first one the renderer finds.
     """
     block_corrections = []
+    seen = set()
+
     for corr in corrections:
         original = corr.get('original')
         corrected = corr.get('corrected', original)
-        if original and original in block_content and original != corrected:
-            count = block_content.count(original)
-            for _ in range(count):
-                block_corrections.append(corr)
+        explanation = corr.get('explanation', '')
+
+        if not original or original == corrected or original not in block_content:
+            continue
+
+        occurrence_starts = _find_all_indices(block_content, original)
+        atomic_edits = _build_atomic_edits(original, corrected)
+        if not atomic_edits:
+            atomic_edits = [
+                {
+                    'relative_start': 0,
+                    'original': original,
+                    'corrected': corrected,
+                }
+            ]
+
+        for occurrence_start in occurrence_starts:
+            for edit in atomic_edits:
+                preferred_start = occurrence_start + edit['relative_start']
+                entry = {
+                    'explanation': explanation,
+                    'original': edit['original'],
+                    'corrected': edit['corrected'],
+                    'preferred_start': preferred_start,
+                }
+                dedupe_key = (
+                    preferred_start,
+                    entry['original'],
+                    entry['corrected'],
+                )
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                block_corrections.append(entry)
+
+    block_corrections.sort(key=lambda item: _correction_sort_key(block_content, item))
     return block_corrections
 
 
@@ -216,11 +324,16 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
                 etree.SubElement(rpr, qn('w:strike'))
         return r
 
-    block_corrections.sort(key=lambda x: block_content.find(x['original']))
+    block_corrections.sort(key=lambda item: _correction_sort_key(block_content, item))
     last_end = 0
     for corr in block_corrections:
         orig = corr['original']
-        start = block_content.find(orig, last_end)
+        start = _resolve_correction_start(
+            block_content,
+            orig,
+            corr.get('preferred_start'),
+            last_end,
+        )
         if start == -1:
             continue
         end = start + len(orig)
@@ -287,12 +400,17 @@ def _apply_inline_corrections_to_paragraph(para, block_content, block_correction
         return
 
     para.clear()
-    block_corrections.sort(key=lambda x: block_content.find(x['original']))
+    block_corrections.sort(key=lambda item: _correction_sort_key(block_content, item))
 
     last_end = 0
     for corr in block_corrections:
         orig = corr['original']
-        start = block_content.find(orig, last_end)
+        start = _resolve_correction_start(
+            block_content,
+            orig,
+            corr.get('preferred_start'),
+            last_end,
+        )
         if start == -1:
             continue
 
@@ -707,12 +825,17 @@ def _apply_hybrid_corrections_to_paragraph(para, block_content, block_correction
 
     para.clear()
     p = para._p
-    block_corrections.sort(key=lambda x: block_content.find(x['original']))
+    block_corrections.sort(key=lambda item: _correction_sort_key(block_content, item))
 
     last_end = 0
     for corr in block_corrections:
         orig = corr['original']
-        start = block_content.find(orig, last_end)
+        start = _resolve_correction_start(
+            block_content,
+            orig,
+            corr.get('preferred_start'),
+            last_end,
+        )
         if start == -1:
             continue
         end = start + len(orig)

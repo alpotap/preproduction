@@ -218,15 +218,29 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
             if matched_paragraph is None:
                 continue
 
-            block_corrections.sort(key=lambda x: item["content"].find(x["original"]))
+            block_corrections.sort(
+                key=lambda corr: (
+                    corr.get("preferred_start")
+                    if isinstance(corr.get("preferred_start"), int)
+                    else item["content"].find(corr["original"])
+                )
+            )
             last_search_start = 0
             for corr in block_corrections:
                 original = corr["original"]
-                expected_start = item["content"].find(original, last_search_start)
+                expected_start = -1
+                preferred_start = corr.get("preferred_start")
+                if isinstance(preferred_start, int) and preferred_start >= last_search_start:
+                    end = preferred_start + len(original)
+                    if item["content"][preferred_start:end] == original:
+                        expected_start = preferred_start
+
+                if expected_start == -1:
+                    expected_start = item["content"].find(original, last_search_start)
                 if expected_start == -1:
                     expected_start = item["content"].find(original)
                 if expected_start != -1:
-                    last_search_start = expected_start + len(original)
+                    last_search_start = max(last_search_start, expected_start + len(original))
 
                 explanation = (corr.get("explanation") or "").strip()
                 _apply_correction_to_paragraph(
