@@ -16,7 +16,6 @@ from getpass import getpass
 
 
 DEFAULT_API_VERSION = "2025-01-01-preview"
-DEFAULT_VENDOR = "azure"
 PROFILE_IDS_VAR = "AZURE_AI_FOUNDRY_PROFILE_IDS"
 PROFILE_SUFFIXES = (
     "API_KEY",

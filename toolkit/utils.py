@@ -2,7 +2,6 @@
 
 import csv
 import ctypes
-from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -110,8 +109,7 @@ def load_config():
         'lm_studio_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
-        'output_types': 'inline, track_changes, hybrid',
-        'default_output_format': 'md'
+        'output_types': 'inline, track_changes, hybrid'
     }
     readme_path = WORKSPACE_ROOT / 'readme.md'
     if not readme_path.exists():
