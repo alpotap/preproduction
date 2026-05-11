@@ -81,13 +81,20 @@ Then restart normally.
 
 Step-by-step job submission:
 
-1. Select task type (process, download+process, consistency).
+1. Select task type (process, download+process).
+	- Consistency analysis is selected through Prompt selection (for example from Document Analysis prompts), not as a separate task type.
 2. Choose or create an input folder.
+	- Task, input folder, and new-folder creation controls are aligned in one row on desktop and stack automatically on narrow screens.
 	- The Files To Process list shows each eligible file in a single full-width row with file size and last processed timestamp.
-3. Upload files (drag-and-drop or file picker). ZIP files are extracted automatically in the background.
-4. Paste URLs to download (for download tasks).
-5. Choose prompt, provider, model, and output types.
-6. Click **Add Job To Queue**.
+	- In **Process existing files**, you can drag and drop files directly into the Files To Process section to upload them into the selected input folder.
+	- The Files To Process section shows an inline tip for drag-and-drop upload.
+3. Paste URLs to download (for download tasks).
+	- URL controls are shown only when task type is **Download and process**.
+	- In **Download and process**, the job processes newly downloaded files from the provided URLs and ignores pre-existing files in the folder.
+4. Choose prompt, provider, model, and output types.
+	- Prompt Category and Prompt selectors are shown side-by-side on desktop.
+	- Output Types are displayed in a horizontal row with responsive wrapping when space is limited.
+5. Click **Add Job To Queue**.
 
 Prompt notes:
 - Prompt lists include versioned entries (baseline `1.0`).
@@ -101,7 +108,7 @@ Prompt notes:
 - Prompt labels in dropdowns include version in the prompt name.
 
 Provider/model/prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
-Provider choices in the wizard are filtered to configured and reachable providers only. For example, Ollama is hidden when no Ollama models are available on that server.
+Provider choices in the wizard are filtered to configured and reachable providers only. Local providers are checked with a short timeout so unavailable hosts do not appear.
 Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
 
 ## Hidden Whitespace Handling
@@ -129,6 +136,7 @@ Queue state is saved to `output/web_job_history.json`. Queued jobs survive serve
 Browse input and output folders:
 
 - Select scope (Input / Output) and a folder.
+- After choosing or creating a folder in Wizard, the Files tab defaults to that folder under Output the next time Files is opened.
 - Files are listed by name with size and modification time.
 - Click **Download** to download a single file.
 - Click **Generate ZIP** to generate a zip archive in the corresponding output folder.

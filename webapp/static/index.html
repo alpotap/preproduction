@@ -31,54 +31,46 @@
         </div>
 
         <div class="step">
-          <span class="step-index">01</span>
           <div class="step-body">
             <h3>Task and Folder</h3>
-            <label>
-              Task
-              <select id="taskType">
-                <option value="process">Process existing files</option>
-                <option value="download_process">Download URLs and process</option>
-                <option value="consistency">Run consistency analysis</option>
-              </select>
-            </label>
-            <div class="folder-row">
+            <div class="folder-row task-folder-row">
+              <label>
+                Task (Input Type)
+                <select id="taskType">
+                  <option value="process">Process existing files</option>
+                  <option value="download_process">Download and process</option>
+                </select>
+              </label>
               <label class="grow">
                 Input folder
                 <select id="folderSelect"></select>
               </label>
-              <label>
-                New folder
-                <input id="newFolderName" type="text" placeholder="6360">
-              </label>
-              <button id="createFolderButton" class="button secondary">Create</button>
+              <div class="inline-input-action">
+                <label>
+                  New folder
+                  <input id="newFolderName" type="text" placeholder="6360">
+                </label>
+                <button id="createFolderButton" class="button secondary">Create</button>
+              </div>
             </div>
             <div class="file-select-block" id="fileSelectBlock">
               <div class="panel-head compact file-select-head">
                 <h4>Files To Process</h4>
-                <div class="toolbar">
+                <div class="toolbar row-toolbar">
                   <button id="selectAllFilesButton" class="button ghost" type="button">All</button>
                   <button id="clearFilesButton" class="button ghost" type="button">None</button>
                 </div>
               </div>
+              <div class="inline-note">Tip: Drag and drop files here to upload them into the selected input folder.</div>
               <div id="selectableFilesList" class="selectable-files-list"></div>
               <div id="selectableFilesNote" class="inline-note"></div>
             </div>
           </div>
         </div>
 
-        <div class="step">
-          <span class="step-index">02</span>
+        <div class="step" id="uploadUrlsStep">
           <div class="step-body">
-            <h3>Upload and URLs</h3>
-            <div id="dropZone" class="dropzone">
-              <input id="fileInput" type="file" multiple hidden>
-              <p>Drag and drop files here</p>
-              <p class="drop-hint">or</p>
-              <button id="chooseFilesButton" class="button secondary" type="button">Choose files</button>
-              <p class="drop-limit">20 MB per file, unlimited file count (ZIP supported)</p>
-            </div>
-            <div id="uploadSummary" class="inline-note"></div>
+            <h3>Download URLs</h3>
             <label>
               Download URLs
               <textarea id="urlsInput" rows="6" placeholder="One URL per line"></textarea>
@@ -87,22 +79,27 @@
         </div>
 
         <div class="step">
-          <span class="step-index">03</span>
           <div class="step-body">
-            <h3>Prompt</h3>
-            <label>
-              Prompt Category
-              <select id="promptCategorySelect"></select>
-            </label>
-            <label>
-              <span class="label-with-info">
-                <span>Prompt</span>
-                <span class="info-badge" tabindex="0">i
-                  <span class="tooltip-panel" id="promptTooltipText"></span>
+            <h3>Prompt & Output</h3>
+            <div class="prompt-output-row">
+              <label>
+                Prompt Category
+                <select id="promptCategorySelect"></select>
+              </label>
+              <label>
+                <span class="label-with-info">
+                  <span>Prompt</span>
+                  <span class="info-badge" tabindex="0">i
+                    <span class="tooltip-panel" id="promptTooltipText"></span>
+                  </span>
                 </span>
-              </span>
-              <select id="promptSelect"></select>
-            </label>
+                <select id="promptSelect"></select>
+              </label>
+            </div>
+            <div class="output-types">
+              <p>Output Types</p>
+              <div id="outputTypeList" class="checkbox-grid output-types-row"></div>
+            </div>
             <button id="enqueueJobButton" class="button primary">Add Job To Queue</button>
             <div id="jobMessage" class="inline-note"></div>
           </div>
@@ -110,7 +107,6 @@
 
         <details class="advanced-step">
           <summary>
-            <span class="step-index">04</span>
             <span class="step-summary-text">Advanced Options</span>
           </summary>
           <div class="advanced-step-body">
@@ -123,10 +119,6 @@
                 Model
                 <select id="modelSelect"></select>
               </label>
-            </div>
-            <div class="output-types">
-              <p>Output types</p>
-              <div id="outputTypeList" class="checkbox-grid"></div>
             </div>
           </div>
         </details>

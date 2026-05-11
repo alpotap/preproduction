@@ -5,6 +5,8 @@ const state = {
   promptMap: {},
   promptAbbrMap: {},
   selectableFiles: [],
+  wizardFilesDefaultFolder: '',
+  pendingWizardFilesDefault: false,
 };
 
 const elements = {
@@ -21,10 +23,7 @@ const elements = {
   selectableFilesNote: document.getElementById('selectableFilesNote'),
   selectAllFilesButton: document.getElementById('selectAllFilesButton'),
   clearFilesButton: document.getElementById('clearFilesButton'),
-  dropZone: document.getElementById('dropZone'),
-  fileInput: document.getElementById('fileInput'),
-  chooseFilesButton: document.getElementById('chooseFilesButton'),
-  uploadSummary: document.getElementById('uploadSummary'),
+  uploadUrlsStep: document.getElementById('uploadUrlsStep'),
   urlsInput: document.getElementById('urlsInput'),
   promptCategorySelect: document.getElementById('promptCategorySelect'),
   promptSelect: document.getElementById('promptSelect'),
@@ -149,7 +148,13 @@ async function loadCapabilities() {
 }
 
 function renderCapabilities() {
-  const { prompts, promptCategories, providers, outputTypes, config } = state.capabilities;
+  const {
+    prompts = [],
+    promptCategories = [],
+    providers = [],
+    outputTypes = [],
+    config = {},
+  } = state.capabilities || {};
   state.promptMap = Object.fromEntries(prompts.map(prompt => [prompt.key, prompt]));
   state.promptAbbrMap = Object.fromEntries(
     prompts
@@ -163,13 +168,23 @@ function renderCapabilities() {
     .map(cat => `<option value="${cat.key}">${cat.label}</option>`)
     .join('');
 
-  // Set initial category from active prompt
-  const activePrompt = state.promptMap[config.activePrompt];
+  // Load prompt from sessionStorage or default to "Full Copy Edit"
+  let sessionPromptKey = null;
+  try {
+    sessionPromptKey = JSON.parse(sessionStorage.getItem('sessionPromptKey'));
+  } catch {
+    // Ignore parse errors
+  }
+  
+  // Try to find "Full Copy Edit" prompt as default
+  const fullCopyEditPrompt = prompts.find(p => p.name === 'Full Copy Edit');
+  const defaultPromptKey = sessionPromptKey || fullCopyEditPrompt?.key || config.activePrompt;
+  const activePrompt = state.promptMap[defaultPromptKey];
   const initialCategory = activePrompt?.category || (categories[0]?.key ?? '');
   elements.promptCategorySelect.value = initialCategory;
 
   // Populate prompt dropdown filtered to selected category
-  filterPromptsByCategory(initialCategory, config.activePrompt);
+  filterPromptsByCategory(initialCategory, defaultPromptKey);
 
   elements.providerSelect.innerHTML = providers
     .map(provider => `<option value="${provider.key}">${provider.label}</option>`)
@@ -185,10 +200,19 @@ function renderCapabilities() {
     }
   }
 
+  // Load output types from sessionStorage or default to ["Hybrid"]
+  let sessionOutputTypes = null;
+  try {
+    sessionOutputTypes = JSON.parse(sessionStorage.getItem('sessionOutputTypes'));
+  } catch {
+    // Ignore parse errors
+  }
+  
+  const defaultOutputTypes = sessionOutputTypes || ['Hybrid'];
+
   elements.outputTypeList.innerHTML = outputTypes
     .map(outputType => {
-      const typesToCheck = config.outputTypes || [];
-      const checked = typesToCheck.includes(outputType.key) ? 'checked' : '';
+      const checked = defaultOutputTypes.includes(outputType.key) ? 'checked' : '';
       return `
         <label class="checkbox-item">
           <input type="checkbox" value="${outputType.key}" ${checked}>
@@ -256,9 +280,14 @@ async function loadModels(preferredModel = null) {
 }
 
 async function persistPreferences(overrides = {}) {
+  // Save prompt and output types to sessionStorage (session-only)
+  const promptKey = elements.promptSelect.value || null;
+  const outputTypes = selectedOutputTypes();
+  sessionStorage.setItem('sessionPromptKey', JSON.stringify(promptKey));
+  sessionStorage.setItem('sessionOutputTypes', JSON.stringify(outputTypes));
+
+  // Still persist provider and model to server for broader configuration
   const payload = {
-    promptKey: elements.promptSelect.value || null,
-    outputTypes: selectedOutputTypes(),
     provider: elements.providerSelect.value || null,
     model: elements.modelSelect.value || null,
     ...overrides,
@@ -271,8 +300,6 @@ async function persistPreferences(overrides = {}) {
   });
 
   if (state.capabilities?.config) {
-    state.capabilities.config.activePrompt = payload.promptKey || state.capabilities.config.activePrompt;
-    state.capabilities.config.outputTypes = payload.outputTypes || state.capabilities.config.outputTypes;
     state.capabilities.config.llmProvider = payload.provider || state.capabilities.config.llmProvider;
     state.capabilities.config.llmModel = payload.model || state.capabilities.config.llmModel;
   }
@@ -301,8 +328,11 @@ async function createFolder() {
     elements.newFolderName.value = '';
     await loadFolders('input', elements.folderSelect);
     elements.folderSelect.value = name;
+    queueFilesTabDefaultFromWizardFolder();
     await refreshSelectableFiles();
-    await loadFolders(elements.browserScopeSelect.value, elements.browserFolderSelect);
+    if (document.getElementById('filesTab')?.classList.contains('active')) {
+      await applyFilesTabDefaultFromWizardFolder();
+    }
     setMessage(elements.jobMessage, `Created folder ${name}.`);
   } catch (error) {
     setMessage(elements.jobMessage, error.message, true);
@@ -310,9 +340,10 @@ async function createFolder() {
 }
 
 async function uploadFiles(fileList) {
+  const uploadMessageTarget = elements.selectableFilesNote || elements.jobMessage;
   const folder = elements.folderSelect.value;
   if (!folder) {
-    setMessage(elements.uploadSummary, 'Choose or create an input folder first.', true);
+    setMessage(uploadMessageTarget, 'Choose or create an input folder first.', true);
     return;
   }
   if (!fileList.length) {
@@ -333,15 +364,18 @@ async function uploadFiles(fileList) {
     const rejected = result.rejected?.length || 0;
     const extracted = result.extractionStarted?.length || 0;
     const extractionNote = extracted ? ` ZIP extraction started for ${extracted} file(s).` : '';
-    setMessage(elements.uploadSummary, `Uploaded ${saved} file(s). Rejected ${rejected}.${extractionNote}`);
+    setMessage(uploadMessageTarget, `Uploaded ${saved} file(s). Rejected ${rejected}.${extractionNote}`);
     await refreshSelectableFiles();
     await refreshFileBrowser();
   } catch (error) {
-    setMessage(elements.uploadSummary, error.message, true);
+    setMessage(uploadMessageTarget, error.message, true);
   }
 }
 
 function selectedOutputTypes() {
+  if (!elements.outputTypeList) {
+    return [];
+  }
   return Array.from(elements.outputTypeList.querySelectorAll('input:checked')).map(input => input.value);
 }
 
@@ -355,6 +389,27 @@ function updateSelectableFilesVisibility() {
   if (!isProcessTask) {
     setMessage(elements.selectableFilesNote, 'File selection is available when Task Type is set to Process Existing Files.');
   }
+}
+
+function updateUploadUrlsVisibility() {
+  const isDownloadTask = elements.taskType.value === 'download_process';
+  if (elements.uploadUrlsStep) {
+    elements.uploadUrlsStep.hidden = !isDownloadTask;
+  }
+}
+
+function queueFilesTabDefaultFromWizardFolder() {
+  state.wizardFilesDefaultFolder = elements.folderSelect.value || '';
+  state.pendingWizardFilesDefault = Boolean(state.wizardFilesDefaultFolder);
+}
+
+async function applyFilesTabDefaultFromWizardFolder() {
+  if (!state.pendingWizardFilesDefault) {
+    return;
+  }
+  const preferredFolder = state.wizardFilesDefaultFolder || elements.folderSelect.value || '';
+  await refreshFileBrowser(preferredFolder, 'output');
+  state.pendingWizardFilesDefault = false;
 }
 
 async function refreshSelectableFiles() {
@@ -406,7 +461,7 @@ async function refreshSelectableFiles() {
         <label class="checkbox-item selectable-file-item" title="${escapeHtmlAttribute(name)}">
           <input type="checkbox" value="${escapeHtmlAttribute(name)}" checked>
           <span class="selectable-file-name">${name}</span>
-          <span class="selectable-file-meta">${size} · Last processed: ${lastProcessed}</span>
+          <span class="selectable-file-meta">Last processed: ${lastProcessed} · ${size}</span>
         </label>
       `;
       })
@@ -446,7 +501,7 @@ async function enqueueJob() {
     return;
   }
   if (payload.taskType === 'download_process' && !payload.urls.trim()) {
-    setMessage(elements.jobMessage, 'Add at least one URL for download-and-process jobs.', true);
+    setMessage(elements.jobMessage, 'Add at least one URL for Download and process jobs.', true);
     return;
   }
   if (payload.taskType === 'process' && !payload.selectedFiles.length) {
@@ -566,14 +621,29 @@ async function refreshLogs() {
   elements.logViewer.scrollTop = elements.logViewer.scrollHeight;
 }
 
-async function refreshFileBrowser() {
+async function refreshFileBrowser(preferredFolder = null, preferredScope = null) {
+  // Guard against DOM change event objects being passed by listeners.
+  if (preferredFolder && typeof preferredFolder === 'object' && 'target' in preferredFolder) {
+    preferredFolder = null;
+  }
+  if (preferredScope && typeof preferredScope === 'object' && 'target' in preferredScope) {
+    preferredScope = null;
+  }
+
+  if (preferredScope) {
+    elements.browserScopeSelect.value = preferredScope;
+  }
+
   const scope = elements.browserScopeSelect.value;
-  const previousFolder = elements.browserFolderSelect.value;
+  const previousFolder = preferredFolder || elements.browserFolderSelect.value;
   await loadFolders(scope, elements.browserFolderSelect);
 
   const folderOptions = Array.from(elements.browserFolderSelect.options).map(option => option.value).filter(Boolean);
   if (previousFolder && folderOptions.includes(previousFolder)) {
     elements.browserFolderSelect.value = previousFolder;
+  } else if (preferredFolder) {
+    elements.browserFolderSelect.innerHTML = `<option value="${preferredFolder}">${preferredFolder}</option>${elements.browserFolderSelect.innerHTML}`;
+    elements.browserFolderSelect.value = preferredFolder;
   } else if (folderOptions.length) {
     elements.browserFolderSelect.value = folderOptions[0];
   }
@@ -629,13 +699,17 @@ async function refreshFileBrowser() {
   `;
 }
 
-function switchTab(tabId) {
+async function switchTab(tabId) {
   elements.tabButtons.forEach(button => {
     button.classList.toggle('active', button.dataset.tab === tabId);
   });
   elements.tabPanels.forEach(panel => {
     panel.classList.toggle('active', panel.id === tabId);
   });
+
+  if (tabId === 'filesTab') {
+    await applyFilesTabDefaultFromWizardFolder();
+  }
 }
 
 async function generateCurrentFolderZip(event) {
@@ -654,7 +728,7 @@ async function generateCurrentFolderZip(event) {
     const payload = await fetchJson(`/api/download-zip?scope=${encodeURIComponent(scope)}&folder=${encodeURIComponent(folder)}`);
 
     // Keep the user anchored in Files and switch to the generated output location.
-    switchTab('filesTab');
+    await switchTab('filesTab');
     elements.browserScopeSelect.value = 'output';
     await loadFolders('output', elements.browserFolderSelect);
     if (payload.outputFolder && Array.from(elements.browserFolderSelect.options).some(option => option.value === payload.outputFolder)) {
@@ -670,39 +744,64 @@ async function generateCurrentFolderZip(event) {
 function bindEvents() {
   window.addEventListener('resize', updateWindowLayoutClass);
   elements.tabButtons.forEach(button => {
-    button.addEventListener('click', () => switchTab(button.dataset.tab));
+    button.addEventListener('click', () => {
+      switchTab(button.dataset.tab).catch(error => setMessage(elements.jobMessage, error.message, true));
+    });
   });
 
   elements.createFolderButton.addEventListener('click', createFolder);
   elements.folderSelect.addEventListener('change', refreshSelectableFiles);
-  elements.taskType.addEventListener('change', updateSelectableFilesVisibility);
+  elements.folderSelect.addEventListener('change', () => {
+    queueFilesTabDefaultFromWizardFolder();
+    if (document.getElementById('filesTab')?.classList.contains('active')) {
+      applyFilesTabDefaultFromWizardFolder().catch(error => setMessage(elements.jobMessage, error.message, true));
+    }
+  });
+  elements.taskType.addEventListener('change', () => {
+    updateSelectableFilesVisibility();
+    updateUploadUrlsVisibility();
+  });
   elements.selectAllFilesButton.addEventListener('click', () => selectAllInputFiles(true));
   elements.clearFilesButton.addEventListener('click', () => selectAllInputFiles(false));
-  elements.chooseFilesButton.addEventListener('click', () => elements.fileInput.click());
-  elements.fileInput.addEventListener('change', event => uploadFiles(event.target.files));
   elements.enqueueJobButton.addEventListener('click', enqueueJob);
   elements.providerSelect.addEventListener('change', async () => {
-    await loadModels();
-    await persistPreferences();
+    try {
+      await loadModels();
+      await persistPreferences();
+    } catch (error) {
+      setMessage(elements.jobMessage, `Provider/model refresh failed: ${error.message}`, true);
+    }
   });
   elements.modelSelect.addEventListener('change', async () => {
-    await persistPreferences();
+    try {
+      await persistPreferences();
+    } catch (error) {
+      setMessage(elements.jobMessage, `Could not save model preference: ${error.message}`, true);
+    }
   });
   elements.promptSelect.addEventListener('change', async () => {
     updatePromptTooltip();
-    await persistPreferences();
+    try {
+      await persistPreferences();
+    } catch (error) {
+      setMessage(elements.jobMessage, `Could not save prompt preference: ${error.message}`, true);
+    }
   });
   elements.promptCategorySelect.addEventListener('change', () =>
     filterPromptsByCategory(elements.promptCategorySelect.value),
   );
   elements.outputTypeList.addEventListener('change', async event => {
     if (event.target && event.target.matches('input[type="checkbox"]')) {
-      await persistPreferences();
+      try {
+        await persistPreferences();
+      } catch (error) {
+        setMessage(elements.jobMessage, `Could not save output type selection: ${error.message}`, true);
+      }
     }
   });
   elements.logKindSelect.addEventListener('change', refreshLogs);
   elements.browserScopeSelect.addEventListener('change', () => refreshFileBrowser());
-  elements.browserFolderSelect.addEventListener('change', refreshFileBrowser);
+  elements.browserFolderSelect.addEventListener('change', () => refreshFileBrowser());
   elements.refreshStatusButton.addEventListener('click', refreshStatus);
   elements.refreshJobsButton.addEventListener('click', refreshJobs);
   elements.refreshLogsButton.addEventListener('click', refreshLogs);
@@ -710,18 +809,27 @@ function bindEvents() {
   elements.downloadAllButton.addEventListener('click', generateCurrentFolderZip);
 
   ['dragenter', 'dragover'].forEach(eventName => {
-    elements.dropZone.addEventListener(eventName, event => {
+    elements.fileSelectBlock.addEventListener(eventName, event => {
+      if (elements.taskType.value !== 'process') {
+        return;
+      }
       event.preventDefault();
-      elements.dropZone.classList.add('dragover');
+      elements.fileSelectBlock.classList.add('dragover');
     });
   });
   ['dragleave', 'drop'].forEach(eventName => {
-    elements.dropZone.addEventListener(eventName, event => {
+    elements.fileSelectBlock.addEventListener(eventName, event => {
+      if (elements.taskType.value !== 'process') {
+        return;
+      }
       event.preventDefault();
-      elements.dropZone.classList.remove('dragover');
+      elements.fileSelectBlock.classList.remove('dragover');
     });
   });
-  elements.dropZone.addEventListener('drop', event => {
+  elements.fileSelectBlock.addEventListener('drop', event => {
+    if (elements.taskType.value !== 'process') {
+      return;
+    }
     uploadFiles(event.dataTransfer.files);
   });
 }
@@ -729,13 +837,24 @@ function bindEvents() {
 async function bootstrap() {
   updateWindowLayoutClass();
   bindEvents();
-  await loadCapabilities();
-  await loadModels(state.capabilities?.config?.llmModel || null);
+
+  const capabilitiesTask = (async () => {
+    try {
+      await loadCapabilities();
+      await loadModels(state.capabilities?.config?.llmModel || null);
+    } catch (error) {
+      setMessage(elements.jobMessage, `LLM controls unavailable: ${error.message}`, true);
+    }
+  })();
+
   await loadFolders('input', elements.folderSelect);
+  queueFilesTabDefaultFromWizardFolder();
   updateSelectableFilesVisibility();
+  updateUploadUrlsVisibility();
   await refreshSelectableFiles();
   await refreshFileBrowser();
   await Promise.all([refreshStatus(), refreshJobs(), refreshLogs()]);
+  await capabilitiesTask;
   window.setInterval(() => {
     refreshStatus();
     refreshJobs();

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 from datetime import datetime
 import json
 from pathlib import Path
@@ -140,9 +141,24 @@ def _build_prompt_details(prompt_definition: dict) -> str:
 
 def _build_available_providers_and_models(config: dict) -> tuple[list[dict[str, str]], dict[str, list]]:
     provider_models: dict[str, list] = {
-        OLLAMA_PROVIDER: fetch_ollama_models(),
-        LM_STUDIO_PROVIDER: fetch_lm_studio_models(config),
+        OLLAMA_PROVIDER: [],
+        LM_STUDIO_PROVIDER: [],
     }
+
+    local_provider_fetchers = {
+        OLLAMA_PROVIDER: lambda: fetch_ollama_models(),
+        LM_STUDIO_PROVIDER: lambda: fetch_lm_studio_models(config),
+    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            provider_key: executor.submit(fetcher)
+            for provider_key, fetcher in local_provider_fetchers.items()
+        }
+        for provider_key, future in futures.items():
+            try:
+                provider_models[provider_key] = future.result(timeout=1.5) or []
+            except Exception:
+                provider_models[provider_key] = []
 
     foundry_catalog = get_foundry_provider_catalog(config)
     for provider_key, bucket in foundry_catalog.items():

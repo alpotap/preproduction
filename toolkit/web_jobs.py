@@ -364,7 +364,10 @@ class JobQueueManager:
             self._raise_if_cancel_requested(job_id)
             client = initialize_client_for_config(config)
 
+            selected_names = {str(name).strip() for name in options.get("selectedFiles", []) if str(name).strip()}
+
             if task_type == "download_process":
+                files_before = {path.name for path in list_processable_files(source_dir)}
                 urls = [line.strip() for line in str(options.get("urls", "")).splitlines() if line.strip()]
                 self.record_line(job_id, f"Downloading {len(urls)} URL(s)")
                 downloaded_count = 0
@@ -374,6 +377,10 @@ class JobQueueManager:
                     if downloaded:
                         downloaded_count += 1
                 self._set_job_state(job_id, downloaded_urls=downloaded_count)
+
+                files_after = {path.name for path in list_processable_files(source_dir)}
+                new_files = files_after - files_before
+                selected_names = selected_names.union(new_files)
 
             if task_type == "consistency":
                 self.record_line(job_id, f"Running consistency analysis for folder {folder}")
@@ -391,12 +398,16 @@ class JobQueueManager:
                 return
 
             files_to_process = list_processable_files(source_dir)
-            selected_names = {str(name).strip() for name in options.get("selectedFiles", []) if str(name).strip()}
             if selected_names:
                 files_to_process = [path for path in files_to_process if path.name in selected_names]
 
             self._set_job_state(job_id, processed_files=len(files_to_process))
             if not files_to_process:
+                if task_type == "download_process":
+                    raise RuntimeError(
+                        "No new processable files found for Download/Upload and process. "
+                        "Add a new upload or URL and try again."
+                    )
                 if selected_names:
                     raise RuntimeError(
                         f"No selected files found in input/{folder}. Refresh files and try again."

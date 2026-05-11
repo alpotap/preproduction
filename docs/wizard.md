@@ -20,7 +20,7 @@ For unattended web hosting on Windows, use the separate service installer descri
    - Process existing files
    - Download URLs and process
    - Change LLM model
-   - Run consistency analysis
+   - Use prompt selection for consistency analysis workflows
    - Select output types
 
 2. **Output type selection** — Multi-select the formats to generate. Your selection is remembered between runs.

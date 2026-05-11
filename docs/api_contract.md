@@ -173,6 +173,7 @@ Response fields:
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
 - Job submission also persists selected provider/model/prompt/output types as shared defaults for future CLI/web sessions.
+- For download_process jobs, processing is limited to newly added files for that run (for Wizard usage: files created by URL downloads); pre-existing processable files in the folder are excluded unless explicitly selected via API.
 
 In all path examples above, `input` and `output` refer to the roots defined in `paths.json`.
 

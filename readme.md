@@ -144,11 +144,11 @@ Provider, model, prompt, and output type defaults are shared across CLI and web 
 Language: en-US
 Highlight Corrections: true
 Add Comments: true
-Active Prompt: staging::default_v1_2
+Active Prompt: default_v1_2
 LLM Provider: azure_ai_foundry
 LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: uncommented, hybrid
+Output Types: hybrid
