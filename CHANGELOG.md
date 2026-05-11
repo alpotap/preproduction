@@ -4,7 +4,31 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2026-05-11]
+
+### Added
+
+- **Horizontal Wizard Control Layout** — Task, Input Folder, and New Folder controls now display in a single horizontal row for better use of screen width.
+- **Equal-Width Output Type Distribution** — Output type checkboxes distribute evenly across the row width.
+- **Conditional Download URLs Section** — Upload and URL input fields are hidden unless the "Download and process" task type is selected.
+- **Drag-and-Drop Upload in Files To Process** — Files To Process section accepts drag-and-drop file uploads when Process Existing Files mode is active.
+- **Files Tab Auto-Sync with Wizard** — Opening the Files tab for the first time after selecting a folder in Wizard automatically navigates to that folder.
+- **Provider Availability Filtering** — Provider dropdown shows only currently reachable providers; unreachable local providers (Ollama, LM Studio) are excluded automatically.
+
+### Changed
+
+- **Removed Step Numbers from Wizard** — Wizard sections no longer display numeric indices; each section uses full available width.
+- **Download and Process Mode (URL-Only)** — Renamed from "Download/Upload"; URLs are now the primary input; only newly downloaded or uploaded files are processed, ignoring pre-existing files in the folder.
+- **Bounded Provider Probing** — Provider availability checks run concurrently (ThreadPoolExecutor, 2 workers) with a 1.5-second timeout per provider, preventing UI startup delays.
+
+### Fixed
+
+- **Files Tab "[object Event]" Display** — Folder selection in Files tab no longer shows a stringified event object; corrected event handler argument guards.
+- **UI Blocking on Startup** — Provider discovery no longer blocks the web app interface while checking Ollama and LM Studio availability.
+
+---
+
+## [2026-05-10]
 
 ### Added
 
@@ -124,6 +148,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **Updated Webapp Documentation** — Azure AI Foundry troubleshooting
   - Common error scenarios and resolution steps
+
+---
+
+## [2026-04-21]
+
+Earlier releases — see git history for details.
 
 ---
 

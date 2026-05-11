@@ -33,6 +33,13 @@ These rules are permanent and apply to all future code changes.
 - Prefer small, focused refactors with explicit cleanup notes.
 - After edits, run at least a smoke validation for the touched flow (CLI or web).
 
+## Changelog Maintenance
+
+- After every `git push`, write a short entry in `CHANGELOG.md` summarizing what changed.
+- Place the entry under a new dated section (e.g., `## [YYYY-MM-DD]`) using the current date.
+- Use compact bullet points: one line per notable change, grouped under `Added`, `Changed`, or `Fixed` as appropriate.
+- If the push contains only minor edits or no user-facing changes, a single sentence under the date is sufficient.
+
 ## List Punctuation (Microsoft Style Guide)
 
 - **Bulleted lists:** End each item with a period if the item is a complete sentence or clause.
