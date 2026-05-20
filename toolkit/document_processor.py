@@ -45,20 +45,30 @@ def _normalize_hidden_whitespace(text: str) -> tuple[str, int]:
             text = text.replace(char, replacement)
             replacement_count += text.count(replacement) if replacement == ' ' else 1
     
-    # Zero-width characters to remove
+    # Zero-width space often acts as an invisible word separator in copied content.
+    if '\u200b' in text:
+        replacement_count += text.count('\u200b')
+        text = text.replace('\u200b', ' ')
+
+    # Other zero-width characters should be removed.
     zero_width_chars = {
-        '\u200b',  # Zero-width space
         '\u200c',  # Zero-width non-joiner
         '\u200d',  # Zero-width joiner
         '\ufeff',  # Zero-width no-break space (BOM)
     }
-    
+
     for char in zero_width_chars:
         if char in text:
             replacement_count += text.count(char)
             text = text.replace(char, '')
     
     return text, replacement_count
+
+
+def _normalize_for_matching(text: str) -> str:
+    """Normalize text for plan-to-paragraph matching without changing visible content."""
+    normalized, _ = _normalize_hidden_whitespace(text or "")
+    return normalized
 
 
 def _paragraph_contains_image(paragraph):
@@ -411,7 +421,12 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
 def _append_batch_to_correction_plan(current_batch, config, client, correction_plan, stats):
     """Gets LLM corrections for one batch and appends normalized entries to correction_plan."""
     full_text = "\n".join([b['content'] for b in current_batch])
+    batch_index = stats.get("llm_batches", 0) + 1
+    batch_word_count = len(full_text.split())
+    print(f"  [i] Sending LLM batch #{batch_index}: {len(current_batch)} paragraph(s), {batch_word_count} words")
     corrections, input_tokens, output_tokens, llm_time = get_corrections_from_llm(full_text, config, client)
+    stats["llm_batches"] = batch_index
+    stats["max_batch_words"] = max(stats.get("max_batch_words", 0), batch_word_count)
     stats["total_input_tokens"] += input_tokens
     stats["total_tokens_generated"] += output_tokens
     stats["total_llm_time"] += llm_time
@@ -554,7 +569,11 @@ def apply_inline_correction_plan(input_path, output_path, correction_plan, confi
 
     all_paragraphs = _collect_all_paragraphs(doc)
     paragraphs = [
-        {'para': para, 'content': para.text}
+        {
+            'para': para,
+            'content': para.text,
+            'normalized_content': _normalize_for_matching(para.text),
+        }
         for para in all_paragraphs
         if para.text and para.text.strip()
     ]
@@ -566,8 +585,12 @@ def apply_inline_correction_plan(input_path, output_path, correction_plan, confi
             continue
 
         matched_paragraph = None
+        plan_content = item.get('content', '')
         for idx in range(paragraph_cursor, len(paragraphs)):
-            if paragraphs[idx]['content'] == item['content']:
+            if (
+                paragraphs[idx]['content'] == plan_content
+                or paragraphs[idx]['normalized_content'] == plan_content
+            ):
                 matched_paragraph = paragraphs[idx]['para']
                 paragraph_cursor = idx + 1
                 break
@@ -1007,7 +1030,11 @@ def apply_hybrid_correction_plan(input_path, output_path, correction_plan, confi
 
     all_paragraphs = _collect_all_paragraphs(doc)
     paragraphs = [
-        {'para': para, 'content': para.text}
+        {
+            'para': para,
+            'content': para.text,
+            'normalized_content': _normalize_for_matching(para.text),
+        }
         for para in all_paragraphs
         if para.text and para.text.strip()
     ]
@@ -1021,8 +1048,12 @@ def apply_hybrid_correction_plan(input_path, output_path, correction_plan, confi
             continue
 
         matched_paragraph = None
+        plan_content = item.get('content', '')
         for idx in range(paragraph_cursor, len(paragraphs)):
-            if paragraphs[idx]['content'] == item['content']:
+            if (
+                paragraphs[idx]['content'] == plan_content
+                or paragraphs[idx]['normalized_content'] == plan_content
+            ):
                 matched_paragraph = paragraphs[idx]['para']
                 paragraph_cursor = idx + 1
                 break

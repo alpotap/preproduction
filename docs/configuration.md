@@ -49,13 +49,21 @@ Current keys:
 - LLM Temperature
 - LLM Max Tokens
 - Output Types
+- AI Only Corrections
+- Retry On Empty Corrections
 
 Azure AI Foundry endpoint, API key, and API version settings are environment-only.
 
 Notes:
 - `Output Types` controls only corrected document formats.
+- `AI Only Corrections` defaults to `true` and keeps correction output strictly model-provided (no local augmentation of extra corrections).
+- Set `AI Only Corrections: false` only when you explicitly want legacy local post-processing/augmentation behavior.
+- Objective guardrails still apply in both modes: invalid terminal appends like `?.`, `!.`, and `:.` are dropped.
+- `Retry On Empty Corrections` defaults to `true` and performs one extra retry at temperature `0.0` when a non-trivial input returns an empty correction list.
 - `Input Directory` and `Output Directory` are no longer read from `readme.md`; use `paths.json` instead.
 - Summary report artifacts (`summary_report_state.json` and `summary_report.docx`) are generated automatically from execution statistics and do not require additional configuration keys.
+- Raw LLM logging writes both request input and response output to `output/llm_raw_output.log`, and the file is automatically trimmed to a maximum size of 10 MB.
+- Each raw log entry also includes single-line `input_preview` and `output_preview` fields near the end of the entry so tail views can show both directions even when full payloads are large.
 - CLI and web both persist provider/model/prompt/output-type defaults into this shared section, so choices apply across browser sessions and users on the same host.
 - Invisible Unicode whitespace (non-breaking spaces, zero-width characters, etc.) in source documents is automatically normalized before LLM analysis. This is transparent and requires no configuration.
 - Correction sanitation blocks duplicate terminal punctuation artifacts (for example `..`) during list-item period augmentation and application.
@@ -127,7 +135,7 @@ The script opens an interactive menu where you can:
 3. Edit an existing model profile.
 4. Remove a model profile.
 5. Test a model with a basic API call.
-6. Save to MACHINE-scope environment variables.
+6. Save to both USER and MACHINE environment variables by default (run elevated).
 
 Model count is unlimited.
 
@@ -142,12 +150,28 @@ Each profile stores:
 
 It then writes the full Azure AI Foundry environment variable set for you (including profile variables and vendor/display metadata) and loads the values in the current terminal session.
 
+Scope options:
+
+- Default: BOTH scopes (`HKCU\\Environment` and `HKLM`) for consistent multi-user usage.
+- `--scope user`: USER scope only (`HKCU\\Environment`) for local, non-admin scenarios.
+- `--scope machine`: MACHINE scope only (`HKLM`) for service/host-level usage.
+
+Examples:
+
+```powershell
+py .\setup_foundry_env.py
+py .\setup_foundry_env.py --scope user
+```
+
 The API key is found in the Azure AI Foundry portal under your project → **Settings → API keys**.
 
-The endpoint base URL follows the pattern:
-`https://<resource-name>.cognitiveservices.azure.com/`
+Endpoint formats:
 
-Do **not** include a specific deployment path or `api-version` query string in the endpoint — the SDK appends those automatically.
+- Azure OpenAI-style resources: `https://<resource-name>.cognitiveservices.azure.com/`
+- Azure AI Foundry serverless resources: `https://<resource-name>.services.ai.azure.com/openai/v1/`
+
+For Azure OpenAI-style resources, do **not** include a specific deployment path or `api-version` query string in the endpoint.
+For Azure AI Foundry serverless resources, prefer the OpenAI-compatible `.../openai/v1/` base URL shown in Azure.
 
 ## Advanced manual setup (optional)
 
@@ -176,17 +200,10 @@ For profile IDs, use letters, numbers, and underscore only.
 ## Verify environment variables
 
 ```powershell
-$profiles = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_PROFILE_IDS", "Machine")
-Write-Host "Profiles: $profiles"
-
-foreach ($p in ($profiles -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-    $up = $p.ToUpperInvariant()
-    $endpoint = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_ENDPOINT", "Machine")
-    $model = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_MODEL_NAME", "Machine")
-    $display = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_DISPLAY_NAME", "Machine")
-    $vendor = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_${up}_VENDOR", "Machine")
-    Write-Host ("{0} => display={1}; model={2}; vendor={3}; endpoint={4}" -f $p, $display, $model, $vendor, $endpoint)
-}
+$profilesUser = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_PROFILE_IDS", "User")
+$profilesMachine = [Environment]::GetEnvironmentVariable("AZURE_AI_FOUNDRY_PROFILE_IDS", "Machine")
+Write-Host "User Profiles: $profilesUser"
+Write-Host "Machine Profiles: $profilesMachine"
 ```
 
 If values are missing, run `python setup_foundry_env.py` again.

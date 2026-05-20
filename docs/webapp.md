@@ -96,6 +96,9 @@ Step-by-step job submission:
 	- Output Types are displayed in a horizontal row with responsive wrapping when space is limited.
 5. Click **Add Job To Queue**.
 
+	- Correction behavior follows shared runtime configuration in `readme.md`; `AI Only Corrections: true` keeps output strictly model-provided.
+	- Objective guardrails still remove invalid terminal punctuation appends such as `?.`, `!.`, and `:.`.
+	- `Retry On Empty Corrections: true` retries non-trivial empty correction results once at temperature `0.0`.
 Prompt notes:
 - Prompt lists include versioned entries (baseline `1.0`).
 - Prompt catalogs are loaded from `prompts/prod` and `prompts/staging`.
@@ -126,6 +129,7 @@ Monitors all running and historical jobs (last 20 shown):
 
 - **Current Run** — shows active job and status message.
 - **Logs** — live tail of execution, performance, or raw LLM logs (10 visible lines, scrollable).
+  Raw LLM log entries are stored in `output/llm_raw_output.log` with explicit `--- INPUT ---` and `--- OUTPUT ---` blocks and a 10 MB maximum file size.
 - **Queue** — compact list with Cancel (queued/running) and Retry (failed/canceled/completed) buttons.
 	- Shows files/URLs plus total corrections and token usage per job: input, output, and combined tokens.
 
@@ -178,9 +182,14 @@ Recommended setup order:
 3. Open Wizard → Advanced Options and confirm model entries appear.
 4. If using multiple Foundry profiles or vendors, select the desired vendor/provider category and profile-qualified model entry before queueing a job.
 
+Notes:
+- `python setup_foundry_env.py` writes both USER and MACHINE scope variables by default for multi-user consistency.
+- Run setup from an elevated session, then restart the `DocumentCorrectionToolkitWeb` service.
+- Use `python setup_foundry_env.py --scope user` only for local single-user runs.
+
 ## Web UI troubleshooting
 
-- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Re-run `python setup_foundry_env.py` to regenerate profile variables, display names, and vendor categories quickly.
+- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Re-run `python setup_foundry_env.py` from an elevated session to synchronize USER and MACHINE profiles, then restart the app/service.
 - **Azure AI Foundry model calls fail for gpt-4o-mini** — Set `AZURE_AI_FOUNDRY_ENDPOINT` to `https://<resource>.cognitiveservices.azure.com/` and set `AZURE_AI_FOUNDRY_API_VERSION` to a compatible preview (for example `2025-01-01-preview`).
 - **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.

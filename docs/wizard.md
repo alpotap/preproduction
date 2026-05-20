@@ -86,6 +86,10 @@ The summary report artifacts are always generated automatically and are not part
 
 Prompts are loaded from filesystem catalogs under `prompts/prod` and `prompts/staging`. Human-editable prompt files use `.prompt.md`, and startup automatically regenerates matching `.json` files from markdown. The active prompt is set by `Active Prompt:` in `readme.md` configuration or overridden per-run in the wizard.
 
+By default, correction output uses model-provided corrections only (`AI Only Corrections: true` in `readme.md` runtime configuration), which avoids local augmentation rules and helps isolate prompt/model behavior during validation.
+Even in AI-only mode, objective output guardrails remain enabled and remove invalid terminal punctuation appends such as `?.`, `!.`, and `:.`.
+When `Retry On Empty Corrections: true`, non-trivial inputs that return `[]` are retried once at temperature `0.0`.
+
 Prompt catalog behavior:
 
 - Every prompt has a `version` field (current baseline `1.0`).
@@ -139,7 +143,8 @@ All selected formats are generated from a **single LLM pass** — no extra API c
 - **No processable files found** — Ensure `.docx`, `.mhtml`, or `.pdf` files exist directly in the selected folder (not in subdirectories). Files with `_corrected` in the name are excluded.
 - **MHTML files remain after a web Download + Process job** — Update to the latest code and rerun. New web jobs clean up source `.mhtml` files after successful conversion.
 - **MHTML/PDF conversion fails** — Requires Microsoft Word and `pywin32`. Run `pip install pywin32` and ensure Word is installed.
-- **No model available** — Check that your LLM provider (Ollama, LM Studio, or Azure AI Foundry) is reachable and configured. For Azure AI Foundry, run `python setup_foundry_env.py` and re-open the app. See [configuration.md](configuration.md).
+- **No model available** — Check that your LLM provider (Ollama, LM Studio, or Azure AI Foundry) is reachable and configured. Re-run `python setup_foundry_env.py` from an elevated session so USER and MACHINE scopes are synchronized, then re-open the app. Use `--scope user` only for local single-user scenarios. See [configuration.md](configuration.md).
+- **Need to inspect exact model I/O** — Check `output/llm_raw_output.log`. Each entry includes `--- INPUT ---` and `--- OUTPUT ---` blocks. The file is capped at 10 MB and auto-trimmed from the oldest entries.
 - **Azure AI Foundry with gpt-4o-mini fails** — Use endpoint root `https://<resource>.cognitiveservices.azure.com/` (not `/openai/v1`) and set `AZURE_AI_FOUNDRY_API_VERSION` (for example `2025-01-01-preview`).
 - **Wizard does not start** — Check `process.py` for syntax errors.
 - **Web UI should run after reboot without a terminal** — Install the Windows service with `Register-WebService.ps1 -Action Install` as described in [webapp.md](webapp.md#windows-service-deployment).

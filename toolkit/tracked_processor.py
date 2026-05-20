@@ -5,6 +5,7 @@ import pythoncom
 import win32com.client as win32
 
 from toolkit.document_processor import build_correction_plan
+from toolkit.document_processor import _normalize_for_matching
 
 
 WD_FIND_STOP = 0
@@ -209,8 +210,13 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
             # item["content"] is python-docx para.text (unstripped); paragraphs[]
             # content is already stripped by _clean_paragraph_text — normalise before comparing.
             item_content_clean = item["content"].strip()
+            item_content_normalized = _normalize_for_matching(item["content"]).strip()
             for idx in range(paragraph_cursor, len(paragraphs)):
-                if paragraphs[idx]["content"] == item_content_clean:
+                paragraph_content_normalized = _normalize_for_matching(paragraphs[idx]["content"]).strip()
+                if (
+                    paragraphs[idx]["content"] == item_content_clean
+                    or paragraph_content_normalized == item_content_normalized
+                ):
                     matched_paragraph = paragraphs[idx]["para"]
                     paragraph_cursor = idx + 1
                     break

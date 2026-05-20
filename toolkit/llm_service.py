@@ -10,11 +10,34 @@ from toolkit.providers import resolve_model_for_request
 
 
 RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"
-RAW_OUTPUT_TRACKER_MAX_LINES = 2000
+RAW_OUTPUT_TRACKER_MAX_BYTES = 10 * 1024 * 1024
+RAW_OUTPUT_ENTRY_MARKER = "=== LLM DEBUG ENTRY START ===\n"
 
 
 def _normalize_space(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    """Parse bool-like values from runtime config payloads."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _compact_preview(value: str, max_chars: int = 320) -> str:
+    """Build a single-line preview suitable for log tails."""
+    compact = _normalize_space(value)
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 3] + "..."
 
 
 def _last_non_space_char(value: str) -> str:
@@ -35,6 +58,34 @@ def _is_terminal_downgrade_to_comma(original: str, corrected: str) -> bool:
     if original_end not in ".?!" or corrected_end != ",":
         return False
     return _strip_terminal_punctuation(original) == _strip_terminal_punctuation(corrected)
+
+
+def _is_invalid_terminal_period_append(original: str, corrected: str) -> bool:
+    """Detect invalid terminal punctuation like '?.' or ':.' appended to an already terminal line."""
+    original_stripped = (original or "").rstrip()
+    corrected_stripped = (corrected or "").rstrip()
+    if not original_stripped or not corrected_stripped:
+        return False
+    if original_stripped == corrected_stripped:
+        return False
+    original_end = _last_non_space_char(original_stripped)
+    if original_end not in ".?!:;":
+        return False
+    return corrected_stripped == original_stripped + "."
+
+
+def _coerce_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_nontrivial_input_for_empty_retry(text: str) -> bool:
+    """Retry only for substantial inputs where empty corrections are unlikely to be correct."""
+    non_empty_lines = [line for line in (text or "").splitlines() if line.strip()]
+    word_count = len((text or "").split())
+    return word_count >= 80 and len(non_empty_lines) >= 8
 
 
 def _looks_like_bullet_or_option_line(line: str) -> bool:
@@ -93,14 +144,17 @@ def _normalize_hidden_whitespace_for_comparison(text: str) -> str:
         if char in text:
             text = text.replace(char, replacement)
     
-    # Zero-width characters to remove
+    # Zero-width space can represent an invisible separator in copied text.
+    if '\u200b' in text:
+        text = text.replace('\u200b', ' ')
+
+    # Other zero-width characters should be removed.
     zero_width_chars = {
-        '\u200b',  # Zero-width space
         '\u200c',  # Zero-width non-joiner
         '\u200d',  # Zero-width joiner
         '\ufeff',  # Zero-width no-break space (BOM)
     }
-    
+
     for char in zero_width_chars:
         if char in text:
             text = text.replace(char, '')
@@ -119,7 +173,7 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
         corrected = str(entry.get("corrected") or original)
         if not original:
             continue
-        if _is_terminal_downgrade_to_comma(original, corrected):
+        if _is_terminal_downgrade_to_comma(original, corrected) or _is_invalid_terminal_period_append(original, corrected):
             dropped_terminal_downgrades += 1
             continue
         
@@ -176,25 +230,80 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
     return sanitized, dropped_terminal_downgrades, added_missing_period_entries, dropped_hidden_whitespace_noops
 
 
-def _append_raw_llm_output(model_name, prompt_key, content):
-    """Append raw LLM response text to a tracker file capped to the last N lines."""
+def _sanitize_corrections_ai_only(result: list) -> list[dict]:
+    """Keep only model-provided corrections without local augmentation."""
+    sanitized: list[dict] = []
+    for entry in result:
+        if not isinstance(entry, dict):
+            continue
+        original = str(entry.get("original") or "")
+        corrected = str(entry.get("corrected") or original)
+        if not original:
+            continue
+        if _is_terminal_downgrade_to_comma(original, corrected):
+            continue
+        if _is_invalid_terminal_period_append(original, corrected):
+            continue
+        sanitized.append(
+            {
+                "explanation": str(entry.get("explanation") or ""),
+                "original": original,
+                "corrected": corrected,
+            }
+        )
+    return sanitized
+
+
+def _append_raw_llm_output(model_name, prompt_key, input_content, output_content):
+    """Append one structured LLM debug entry with input/output and cap file size to 10MB."""
     RAW_OUTPUT_TRACKER_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    entry_lines = [
-        f"[{datetime.now().isoformat()}] model={model_name} prompt={prompt_key}",
-        content if content is not None else "",
-        "",
-    ]
+    input_text = input_content if input_content is not None else ""
+    output_text = output_content if output_content is not None else ""
+    timestamp = datetime.now().isoformat()
+
+    entry = (
+        RAW_OUTPUT_ENTRY_MARKER
+        + f"timestamp: {timestamp}\n"
+        + f"model: {model_name}\n"
+        + f"prompt_key: {prompt_key}\n"
+        + f"input_char_count: {len(input_text)}\n"
+        + f"input_word_count: {len(input_text.split())}\n"
+        + f"output_char_count: {len(output_text)}\n"
+        + "--- INPUT ---\n"
+        + input_text
+        + "\n--- OUTPUT ---\n"
+        + output_text
+        + "\n--- PREVIEW ---\n"
+        + f"input_preview: {_compact_preview(input_text)}\n"
+        + f"output_preview: {_compact_preview(output_text)}\n"
+        + "=== LLM DEBUG ENTRY END ===\n"
+    )
 
     with open(RAW_OUTPUT_TRACKER_PATH, "a", encoding="utf-8") as tracker_file:
-        tracker_file.write("\n".join(entry_lines))
+        tracker_file.write(entry)
 
-    with open(RAW_OUTPUT_TRACKER_PATH, "r", encoding="utf-8") as tracker_file:
-        lines = tracker_file.readlines()
+    try:
+        current_size = RAW_OUTPUT_TRACKER_PATH.stat().st_size
+    except FileNotFoundError:
+        return
 
-    if len(lines) > RAW_OUTPUT_TRACKER_MAX_LINES:
-        with open(RAW_OUTPUT_TRACKER_PATH, "w", encoding="utf-8") as tracker_file:
-            tracker_file.writelines(lines[-RAW_OUTPUT_TRACKER_MAX_LINES:])
+    if current_size <= RAW_OUTPUT_TRACKER_MAX_BYTES:
+        return
+
+    with open(RAW_OUTPUT_TRACKER_PATH, "rb") as tracker_file:
+        data = tracker_file.read()
+
+    keep_from = max(0, len(data) - RAW_OUTPUT_TRACKER_MAX_BYTES)
+    trimmed = data[keep_from:]
+
+    marker_bytes = RAW_OUTPUT_ENTRY_MARKER.encode("utf-8")
+    marker_index = trimmed.find(marker_bytes)
+    if marker_index > 0:
+        trimmed = trimmed[marker_index:]
+
+    with open(RAW_OUTPUT_TRACKER_PATH, "wb") as tracker_file:
+        tracker_file.write(trimmed)
 
 
 def _extract_json_array_from_response(content: str) -> tuple[str, bool]:
@@ -337,7 +446,7 @@ def _response_looks_truncated_json(content: str) -> bool:
     return False
 
 
-def get_corrections_from_llm(text, config, client):
+def get_corrections_from_llm(text, config, client, _allow_empty_retry=True):
     """Sends text to the LLM and returns corrections, input/output tokens, and duration."""
     
     # Load prompt from prompts.py based on config, fallback to default if key missing
@@ -367,7 +476,7 @@ def get_corrections_from_llm(text, config, client):
             prompt_tokens = response.usage.prompt_tokens if response.usage else 0
             completion_tokens = response.usage.completion_tokens if response.usage else 0
             content = response.choices[0].message.content.strip()
-            _append_raw_llm_output(resolved_model, prompt_key, content)
+            _append_raw_llm_output(resolved_model, prompt_key, prompt, content)
 
             # Use robust JSON extraction that handles markdown blocks, embedded JSON, and nested structures
             json_str_to_decode, used_partial_recovery = _extract_json_array_from_response(content)
@@ -381,13 +490,43 @@ def get_corrections_from_llm(text, config, client):
                 raise ValueError("LLM response is valid JSON but not a list.")
             if used_partial_recovery:
                 print(f"  [i] Recovered {len(result)} correction(s) from a truncated LLM JSON response.")
-            result, dropped_count, added_count, dropped_hidden_ws_count = _sanitize_and_augment_corrections(result, text)
-            if dropped_count:
-                print(f"  [i] Dropped {dropped_count} terminal punctuation downgrade correction(s) (.?! -> ,).")
-            if added_count:
-                print(f"  [i] Added {added_count} missing-period correction(s) for bullet/option list items.")
-            if dropped_hidden_ws_count:
-                print(f"  [i] Dropped {dropped_hidden_ws_count} false-positive correction(s) caused by hidden Unicode whitespace.")
+            ai_only = _as_bool(config.get("ai_only_corrections"), default=True)
+            if ai_only:
+                result = _sanitize_corrections_ai_only(result)
+            else:
+                result, dropped_count, added_count, dropped_hidden_ws_count = _sanitize_and_augment_corrections(result, text)
+                if dropped_count:
+                    print(f"  [i] Dropped {dropped_count} terminal punctuation downgrade correction(s) (.?! -> ,).")
+                if added_count:
+                    print(f"  [i] Added {added_count} missing-period correction(s) for bullet/option list items.")
+                if dropped_hidden_ws_count:
+                    print(f"  [i] Dropped {dropped_hidden_ws_count} false-positive correction(s) caused by hidden Unicode whitespace.")
+
+            retry_on_empty = _as_bool(config.get("retry_on_empty_corrections"), default=True)
+            configured_temperature = _coerce_float(config.get("llm_temperature"), default=0.0)
+            if (
+                _allow_empty_retry
+                and retry_on_empty
+                and configured_temperature > 0.0
+                and not result
+                and _is_nontrivial_input_for_empty_retry(text)
+            ):
+                print("  [i] Empty correction list on non-trivial input; retrying once at temperature 0.0.")
+                retry_config = dict(config)
+                retry_config["llm_temperature"] = 0.0
+                retry_result, retry_prompt_tokens, retry_completion_tokens, retry_llm_time = get_corrections_from_llm(
+                    text,
+                    retry_config,
+                    client,
+                    _allow_empty_retry=False,
+                )
+                return (
+                    retry_result,
+                    prompt_tokens + retry_prompt_tokens,
+                    completion_tokens + retry_completion_tokens,
+                    llm_time + retry_llm_time,
+                )
+
             return result, prompt_tokens, completion_tokens, llm_time
 
         except (ValueError, json.JSONDecodeError) as e:
@@ -437,7 +576,7 @@ def get_text_from_llm(text, config, client):
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
         content = response.choices[0].message.content.strip()
-        _append_raw_llm_output(resolved_model, prompt_key, content)
+        _append_raw_llm_output(resolved_model, prompt_key, prompt, content)
         return content, input_tokens, output_tokens, llm_time
     except Exception as e:
         llm_time = time.time() - llm_start_time

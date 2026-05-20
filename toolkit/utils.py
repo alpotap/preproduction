@@ -109,7 +109,9 @@ def load_config():
         'lm_studio_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
-        'output_types': 'inline, track_changes, hybrid'
+        'output_types': 'inline, track_changes, hybrid',
+        'ai_only_corrections': True,
+        'retry_on_empty_corrections': True,
     }
     readme_path = WORKSPACE_ROOT / 'readme.md'
     if not readme_path.exists():

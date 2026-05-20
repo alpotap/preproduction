@@ -2,8 +2,9 @@
 """Interactive Azure AI Foundry environment setup for Windows.
 
 Provides a menu to list, add, edit, remove, and test model configurations.
-All values are stored in HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\Environment
-(MACHINE scope) so Windows services can access them.
+By default, values are stored in both HKCU\\Environment (USER scope) and
+HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\Environment
+(MACHINE scope) for consistent multi-user behavior.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ PROFILE_SUFFIXES = (
     "DISPLAY_NAME",
     "VENDOR",
 )
+ENV_SCOPE_USER = "user"
+ENV_SCOPE_MACHINE = "machine"
+ENV_SCOPE_BOTH = "both"
 
 
 def _read_registry_env(name: str, root: int, subkey: str) -> str:
@@ -46,6 +50,9 @@ def get_env_value(name: str) -> str:
         return ""
     import winreg
 
+    user_value = _read_registry_env(name, root=winreg.HKEY_CURRENT_USER, subkey=r"Environment")
+    if user_value:
+        return user_value
     machine_value = _read_registry_env(
         name,
         root=winreg.HKEY_LOCAL_MACHINE,
@@ -53,7 +60,39 @@ def get_env_value(name: str) -> str:
     )
     if machine_value:
         return machine_value
-    return _read_registry_env(name, root=winreg.HKEY_CURRENT_USER, subkey=r"Environment")
+    return ""
+
+
+def get_profile_ids() -> list[str]:
+    """Merge profile IDs from process, USER, and MACHINE sources."""
+    raw_values: list[str] = []
+    process_value = (os.getenv(PROFILE_IDS_VAR) or "").strip()
+    if process_value:
+        raw_values.append(process_value)
+
+    if os.name == "nt":
+        import winreg
+
+        user_value = _read_registry_env(PROFILE_IDS_VAR, winreg.HKEY_CURRENT_USER, r"Environment")
+        if user_value:
+            raw_values.append(user_value)
+        machine_value = _read_registry_env(
+            PROFILE_IDS_VAR,
+            winreg.HKEY_LOCAL_MACHINE,
+            r"System\CurrentControlSet\Control\Session Manager\Environment",
+        )
+        if machine_value:
+            raw_values.append(machine_value)
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        for item in raw.split(","):
+            profile = normalize_profile_id(item)
+            if profile and profile not in seen:
+                seen.add(profile)
+                merged.append(profile)
+    return merged
 
 
 def normalize_profile_id(name: str) -> str:
@@ -61,22 +100,17 @@ def normalize_profile_id(name: str) -> str:
     return candidate or "profile"
 
 
-def set_machine_and_process_env(name: str, value: str) -> None:
-    """Set environment variable in MACHINE scope (registry) and current process.
-    
-    MACHINE scope (HKLM) is required so Windows services can access these variables.
-    Services run under different accounts and cannot read USER-scoped (HKCU) variables.
-    
-    Note: Requires administrative privileges to write to HKLM.
-    """
-    os.environ[name] = value
+def _set_registry_env(name: str, value: str, scope: str) -> None:
     if os.name != "nt":
         return
+    import winreg
 
-    try:
-        import winreg
+    if scope == ENV_SCOPE_USER:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment", 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, value)
+        return
 
-        # Write to MACHINE scope (HKLM) so Windows services can read these vars
+    if scope == ENV_SCOPE_MACHINE:
         with winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
             r"System\CurrentControlSet\Control\Session Manager\Environment",
@@ -84,23 +118,46 @@ def set_machine_and_process_env(name: str, value: str) -> None:
             winreg.KEY_SET_VALUE,
         ) as key:
             winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, value)
-    except PermissionError:
-        raise RuntimeError(
-            f"Failed to write MACHINE environment variable '{name}': "
-            "This wizard requires administrator privileges. "
-            "Please run this script as Administrator (right-click > Run as administrator)."
-        )
-    except Exception as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(f"Failed to write MACHINE environment variable '{name}': {exc}") from exc
+        return
+
+    raise ValueError(f"Unsupported scope: {scope}")
 
 
-def delete_machine_and_process_env(name: str) -> None:
-    os.environ.pop(name, None)
+def set_scoped_and_process_env(name: str, value: str, scope: str) -> None:
+    """Set env var in current process and requested persistent scope(s)."""
+    os.environ[name] = value
     if os.name != "nt":
         return
-    try:
-        import winreg
 
+    try:
+        if scope == ENV_SCOPE_BOTH:
+            _set_registry_env(name, value, ENV_SCOPE_USER)
+            _set_registry_env(name, value, ENV_SCOPE_MACHINE)
+        else:
+            _set_registry_env(name, value, scope)
+    except PermissionError:
+        target = "MACHINE" if scope in {ENV_SCOPE_MACHINE, ENV_SCOPE_BOTH} else "USER"
+        raise RuntimeError(
+            f"Failed to write {target} environment variable '{name}': "
+            "Administrator privileges are required for MACHINE scope. "
+            "Either run as Administrator, or rerun with --scope user."
+        )
+    except Exception as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(f"Failed to write scoped environment variable '{name}': {exc}") from exc
+
+
+def _delete_registry_env(name: str, scope: str) -> None:
+    import winreg
+
+    if scope == ENV_SCOPE_USER:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment", 0, winreg.KEY_SET_VALUE) as key:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+        return
+
+    if scope == ENV_SCOPE_MACHINE:
         with winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
             r"System\CurrentControlSet\Control\Session Manager\Environment",
@@ -111,14 +168,30 @@ def delete_machine_and_process_env(name: str) -> None:
                 winreg.DeleteValue(key, name)
             except FileNotFoundError:
                 pass
+        return
+
+    raise ValueError(f"Unsupported scope: {scope}")
+
+
+def delete_scoped_and_process_env(name: str, scope: str) -> None:
+    os.environ.pop(name, None)
+    if os.name != "nt":
+        return
+    try:
+        if scope == ENV_SCOPE_BOTH:
+            _delete_registry_env(name, ENV_SCOPE_USER)
+            _delete_registry_env(name, ENV_SCOPE_MACHINE)
+        else:
+            _delete_registry_env(name, scope)
     except PermissionError:
+        target = "MACHINE" if scope in {ENV_SCOPE_MACHINE, ENV_SCOPE_BOTH} else "USER"
         raise RuntimeError(
-            f"Failed to remove MACHINE environment variable '{name}': "
-            "This wizard requires administrator privileges. "
-            "Please run this script as Administrator (right-click > Run as administrator)."
+            f"Failed to remove {target} environment variable '{name}': "
+            "Administrator privileges are required for MACHINE scope. "
+            "Either run as Administrator, or rerun with --scope user."
         )
     except Exception as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(f"Failed to remove MACHINE environment variable '{name}': {exc}") from exc
+        raise RuntimeError(f"Failed to remove scoped environment variable '{name}': {exc}") from exc
 
 
 def _contains_non_ascii(value: str) -> bool:
@@ -149,8 +222,12 @@ def prompt_with_default(prompt: str, default: str, *, secret: bool = False, allo
         print("Value is required.")
 
 
+def normalize_api_key(value: str) -> str:
+    return (value or "").strip().strip("`\"'")
+
+
 def mask_secret(value: str) -> str:
-    raw = (value or "").strip()
+    raw = normalize_api_key(value)
     if not raw:
         return ""
     if len(raw) == 1:
@@ -162,13 +239,12 @@ def mask_secret(value: str) -> str:
 
 def load_entries() -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
-    profile_ids_raw = get_env_value(PROFILE_IDS_VAR)
-    profile_ids = [normalize_profile_id(item) for item in profile_ids_raw.split(",") if normalize_profile_id(item)]
+    profile_ids = get_profile_ids()
 
     for profile in profile_ids:
         up = profile.upper()
         model_name = get_env_value(f"AZURE_AI_FOUNDRY_{up}_MODEL_NAME")
-        api_key = get_env_value(f"AZURE_AI_FOUNDRY_{up}_API_KEY")
+        api_key = normalize_api_key(get_env_value(f"AZURE_AI_FOUNDRY_{up}_API_KEY"))
         endpoint = get_env_value(f"AZURE_AI_FOUNDRY_{up}_ENDPOINT")
         if not model_name or not api_key or not endpoint:
             continue
@@ -189,7 +265,7 @@ def load_entries() -> list[dict[str, str]]:
 
     # Backward-compatible bootstrap from legacy single-profile variables.
     model_name = get_env_value("AZURE_AI_FOUNDRY_MODEL_NAME")
-    api_key = get_env_value("AZURE_AI_FOUNDRY_API_KEY")
+    api_key = normalize_api_key(get_env_value("AZURE_AI_FOUNDRY_API_KEY"))
     endpoint = get_env_value("AZURE_AI_FOUNDRY_ENDPOINT")
     if model_name and api_key and endpoint:
         entries.append(
@@ -256,7 +332,7 @@ def add_entry(entries: list[dict[str, str]]) -> None:
     print("Add model")
     display_name = prompt_non_empty("Display name (shown in list and dropdowns)")
     model_name = prompt_non_empty("Model/deployment name (actual API model)")
-    api_key = prompt_non_empty("API key", secret=True)
+    api_key = normalize_api_key(prompt_non_empty("API key", secret=True))
     if _contains_non_ascii(api_key):
         raise ValueError("API key contains non-ASCII characters. Paste the raw key from Azure portal.")
     if any(ch.isspace() for ch in api_key):
@@ -291,6 +367,17 @@ def _normalize_azure_endpoint(endpoint: str) -> str:
             value = value[:idx]
             break
     return value.rstrip("/")
+
+
+def _normalize_ai_services_openai_base(endpoint: str) -> str:
+    value = (endpoint or "").strip()
+    if "?" in value:
+        value = value[: value.index("?")]
+    value = value.rstrip("/")
+    if "/openai/v1" in value.lower():
+        idx = value.lower().find("/openai/v1")
+        return value[: idx + len("/openai/v1")]
+    return _normalize_azure_endpoint(value) + "/openai/v1"
 
 
 def _is_ai_services_endpoint(endpoint: str) -> bool:
@@ -330,17 +417,15 @@ def test_entry(entry: dict[str, str]) -> None:
         request_model = entry["model_name"]
         if _is_ai_services_endpoint(entry["endpoint"]):
             client = OpenAI(
-                api_key=entry["api_key"],
-                base_url=f"{base_endpoint}/models",
-                default_headers={"api-key": entry["api_key"]},
-                default_query={"api-version": entry["api_version"]},
+                api_key=normalize_api_key(entry["api_key"]),
+                base_url=_normalize_ai_services_openai_base(entry["endpoint"]),
             )
         else:
             # For Azure OpenAI endpoints that include a deployment path,
             # the deployment name is the effective model identifier.
             request_model = _extract_azure_deployment_from_endpoint(entry["endpoint"]) or entry["model_name"]
             client = AzureOpenAI(
-                api_key=entry["api_key"],
+                api_key=normalize_api_key(entry["api_key"]),
                 azure_endpoint=base_endpoint,
                 api_version=entry["api_version"],
             )
@@ -411,45 +496,41 @@ def remove_entry(entries: list[dict[str, str]]) -> None:
     print(f"Removed '{removed['display_name']}'.")
 
 
-def save_entries(entries: list[dict[str, str]]) -> None:
-    existing_profiles = [
-        normalize_profile_id(item)
-        for item in get_env_value(PROFILE_IDS_VAR).split(",")
-        if normalize_profile_id(item)
-    ]
+def save_entries(entries: list[dict[str, str]], scope: str) -> None:
+    existing_profiles = get_profile_ids()
     current_profiles = [entry["profile"] for entry in entries]
 
-    set_machine_and_process_env(PROFILE_IDS_VAR, ",".join(current_profiles))
+    set_scoped_and_process_env(PROFILE_IDS_VAR, ",".join(current_profiles), scope)
 
     for entry in entries:
         up = entry["profile"].upper()
-        set_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_API_KEY", entry["api_key"])
-        set_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_ENDPOINT", entry["endpoint"])
-        set_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_API_VERSION", entry["api_version"])
-        set_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_MODEL_NAME", entry["model_name"])
-        set_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_DISPLAY_NAME", entry["display_name"])
-        set_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_VENDOR", entry["vendor"])
+        set_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_API_KEY", entry["api_key"], scope)
+        set_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_ENDPOINT", entry["endpoint"], scope)
+        set_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_API_VERSION", entry["api_version"], scope)
+        set_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_MODEL_NAME", entry["model_name"], scope)
+        set_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_DISPLAY_NAME", entry["display_name"], scope)
+        set_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_VENDOR", entry["vendor"], scope)
 
     removed_profiles = [profile for profile in existing_profiles if profile not in current_profiles]
     for profile in removed_profiles:
         up = profile.upper()
         for suffix in PROFILE_SUFFIXES:
-            delete_machine_and_process_env(f"AZURE_AI_FOUNDRY_{up}_{suffix}")
+            delete_scoped_and_process_env(f"AZURE_AI_FOUNDRY_{up}_{suffix}", scope)
 
     if entries:
         first = entries[0]
-        set_machine_and_process_env("AZURE_AI_FOUNDRY_API_KEY", first["api_key"])
-        set_machine_and_process_env("AZURE_AI_FOUNDRY_ENDPOINT", first["endpoint"])
-        set_machine_and_process_env("AZURE_AI_FOUNDRY_API_VERSION", first["api_version"])
-        set_machine_and_process_env("AZURE_AI_FOUNDRY_MODEL_NAME", first["model_name"])
+        set_scoped_and_process_env("AZURE_AI_FOUNDRY_API_KEY", first["api_key"], scope)
+        set_scoped_and_process_env("AZURE_AI_FOUNDRY_ENDPOINT", first["endpoint"], scope)
+        set_scoped_and_process_env("AZURE_AI_FOUNDRY_API_VERSION", first["api_version"], scope)
+        set_scoped_and_process_env("AZURE_AI_FOUNDRY_MODEL_NAME", first["model_name"], scope)
     else:
-        delete_machine_and_process_env("AZURE_AI_FOUNDRY_API_KEY")
-        delete_machine_and_process_env("AZURE_AI_FOUNDRY_ENDPOINT")
-        delete_machine_and_process_env("AZURE_AI_FOUNDRY_API_VERSION")
-        delete_machine_and_process_env("AZURE_AI_FOUNDRY_MODEL_NAME")
+        delete_scoped_and_process_env("AZURE_AI_FOUNDRY_API_KEY", scope)
+        delete_scoped_and_process_env("AZURE_AI_FOUNDRY_ENDPOINT", scope)
+        delete_scoped_and_process_env("AZURE_AI_FOUNDRY_API_VERSION", scope)
+        delete_scoped_and_process_env("AZURE_AI_FOUNDRY_MODEL_NAME", scope)
 
     print("")
-    print("Saved Azure AI Foundry environment variables to MACHINE scope (system-wide).")
+    print(f"Saved Azure AI Foundry environment variables to scope: {scope}.")
     if entries:
         print(f"Profiles: {','.join(current_profiles)}")
     else:
@@ -459,15 +540,26 @@ def save_entries(entries: list[dict[str, str]]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Interactive Azure AI Foundry environment setup")
-    parser.parse_args()
+    parser.add_argument(
+        "--scope",
+        choices=(ENV_SCOPE_USER, ENV_SCOPE_MACHINE, ENV_SCOPE_BOTH),
+        default=ENV_SCOPE_BOTH,
+        help="Environment write scope: both (default), user, or machine.",
+    )
+    args = parser.parse_args()
 
     if os.name != "nt":
         print("This setup helper is intended for Windows.")
 
     print("Azure AI Foundry setup")
-    print("This wizard stores values in MACHINE environment variables (system-wide scope).")
-    print("IMPORTANT: This wizard requires administrator privileges.")
-    print("If you see 'Access Denied' errors, please run as Administrator (right-click > Run as administrator).")
+    print(f"Write scope: {args.scope}")
+    if args.scope in {ENV_SCOPE_MACHINE, ENV_SCOPE_BOTH}:
+        print("IMPORTANT: MACHINE scope requires administrator privileges.")
+        print("If you see 'Access Denied' errors, rerun as Administrator.")
+        print("Use --scope user only for local, single-user scenarios.")
+    else:
+        print("USER scope does not require administrator privileges.")
+        print("Note: USER-only writes can cause differences across users on the same host.")
     print("")
 
     entries = load_entries()
@@ -495,7 +587,7 @@ def main() -> int:
             if idx >= 0:
                 test_entry(entries[idx])
         elif choice == "5":
-            save_entries(entries)
+            save_entries(entries, args.scope)
             break
         elif choice == "6":
             print("No changes were saved.")
@@ -504,10 +596,11 @@ def main() -> int:
             print("Invalid selection.")
 
     print("")
-    print("IMPORTANT: Restart the Windows service for these variables to take effect:")
-    print("  Restart-Service DocumentCorrectionToolkitWeb")
-    print("")
-    print("Alternatively, restart the app (or open a new terminal) to use new variables in local mode.")
+    if args.scope in {ENV_SCOPE_MACHINE, ENV_SCOPE_BOTH}:
+        print("IMPORTANT: Restart the Windows service for MACHINE-scope variables to take effect:")
+        print("  Restart-Service DocumentCorrectionToolkitWeb")
+        print("")
+    print("Restart the app (or open a new terminal) to use updated variables in local mode.")
     return 0
 
 

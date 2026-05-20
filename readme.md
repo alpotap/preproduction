@@ -23,6 +23,14 @@ py -m pip install -r requirements.txt
 py setup_foundry_env.py
 ```
 
+This setup wizard now writes Azure AI Foundry variables to both USER and MACHINE scopes by default for consistent multi-user behavior.
+Run from an elevated PowerShell session.
+For local-only, non-admin scenarios, you can opt into USER-only scope:
+
+```shell
+py setup_foundry_env.py --scope user
+```
+
 3. Choose how you want to run the app.
 
 CLI wizard:
@@ -124,6 +132,7 @@ The input/output roots come from `paths.json`.
 | `output/<folder>/summary_report.docx` | Auto-generated summary report |
 | `output/performance_log.csv` | Per-run performance metrics |
 | `output/execution.log` | Background job log |
+| `output/llm_raw_output.log` | Raw LLM entries with input and output blocks (capped at 10 MB) |
 
 ## Docs Map
 
@@ -149,6 +158,8 @@ LLM Provider: azure_ai_foundry
 LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
-LLM Temperature: 0.1
+LLM Temperature: 0.7
 LLM Max Tokens: 8000
 Output Types: hybrid
+AI Only Corrections: true
+Retry On Empty Corrections: true

@@ -13,8 +13,12 @@ FOUNDRY_VENDOR_PROVIDER_PREFIX = "foundry_vendor_"
 DEFAULT_FOUNDRY_VENDOR = "azure"
 
 
+def _normalize_api_key(value):
+    return (value or "").strip().strip("`\"'")
+
+
 def _read_env_var(name):
-    """Read env var from process first, then Windows HKCU\\Environment fallback."""
+    """Read env var from process, then Windows HKCU/HKLM registry fallbacks."""
     value = (os.getenv(name) or "").strip()
     if value:
         return value
@@ -24,6 +28,19 @@ def _read_env_var(name):
         import winreg  # type: ignore
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+            reg_value, _ = winreg.QueryValueEx(key, name)
+            user_value = str(reg_value).strip()
+            if user_value:
+                return user_value
+    except Exception:
+        pass
+    try:
+        import winreg  # type: ignore
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"System\CurrentControlSet\Control\Session Manager\Environment",
+        ) as key:
             reg_value, _ = winreg.QueryValueEx(key, name)
             return str(reg_value).strip()
     except Exception:
@@ -82,12 +99,49 @@ def _normalize_profile_id(raw_profile):
 
 
 def _parse_profile_ids():
-    raw = _read_env_var("AZURE_AI_FOUNDRY_PROFILE_IDS")
-    return [profile for profile in (_normalize_profile_id(item) for item in raw.split(",")) if profile]
+    merged_raw_values = []
+    process_value = (os.getenv("AZURE_AI_FOUNDRY_PROFILE_IDS") or "").strip()
+    if process_value:
+        merged_raw_values.append(process_value)
+
+    if os.name == "nt":
+        try:
+            import winreg  # type: ignore
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                user_value, _ = winreg.QueryValueEx(key, "AZURE_AI_FOUNDRY_PROFILE_IDS")
+                user_value = str(user_value).strip()
+                if user_value:
+                    merged_raw_values.append(user_value)
+        except Exception:
+            pass
+        try:
+            import winreg  # type: ignore
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"System\CurrentControlSet\Control\Session Manager\Environment",
+            ) as key:
+                machine_value, _ = winreg.QueryValueEx(key, "AZURE_AI_FOUNDRY_PROFILE_IDS")
+                machine_value = str(machine_value).strip()
+                if machine_value:
+                    merged_raw_values.append(machine_value)
+        except Exception:
+            pass
+
+    profiles = []
+    seen = set()
+    for raw in merged_raw_values:
+        for item in raw.split(","):
+            profile = _normalize_profile_id(item)
+            if profile and profile not in seen:
+                seen.add(profile)
+                profiles.append(profile)
+    return profiles
 
 
 def _build_legacy_foundry_profile():
-    api_key = _read_env_var("AZURE_AI_FOUNDRY_API_KEY")
+    api_key = _normalize_api_key(_read_env_var("AZURE_AI_FOUNDRY_API_KEY"))
     endpoint = _read_env_var("AZURE_AI_FOUNDRY_ENDPOINT")
     api_version = _read_env_var("AZURE_AI_FOUNDRY_API_VERSION") or DEFAULT_AZURE_AI_FOUNDRY_API_VERSION
     raw_models = _read_env_var("AZURE_AI_FOUNDRY_MODEL_NAME")
@@ -108,7 +162,7 @@ def _build_legacy_foundry_profile():
 
 def _build_profile_entry(profile):
     profile_upper = profile.upper()
-    api_key = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_API_KEY")
+    api_key = _normalize_api_key(_read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_API_KEY"))
     endpoint = _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_ENDPOINT")
     api_version = (
         _read_env_var(f"AZURE_AI_FOUNDRY_{profile_upper}_API_VERSION")
@@ -311,6 +365,20 @@ def _normalize_azure_endpoint(endpoint):
     return value.rstrip("/")
 
 
+def _normalize_ai_services_openai_base(endpoint):
+    """Normalize an Azure AI Services endpoint to its OpenAI-compatible /openai/v1 base."""
+    value = (endpoint or "").strip()
+    if "?" in value:
+        value = value[: value.index("?")]
+    value = value.rstrip("/")
+    lower_value = value.lower()
+    marker = "/openai/v1"
+    if marker in lower_value:
+        idx = lower_value.find(marker)
+        return value[: idx + len(marker)]
+    return _normalize_azure_endpoint(value) + marker
+
+
 def _extract_azure_deployment_from_endpoint(endpoint):
     """Extract deployment name from full Azure OpenAI endpoint paths when present."""
     value = (endpoint or "").strip()
@@ -379,13 +447,10 @@ def create_client(provider, config):
             raise RuntimeError("Missing AZURE_AI_FOUNDRY_ENDPOINT environment variable.")
 
         if _is_ai_services_endpoint(foundry_settings["endpoint"]):
-            # Azure AI Services (serverless) endpoints use /models inference path — use OpenAI client.
-            base = _normalize_azure_endpoint(foundry_settings["endpoint"])
+            # Azure AI Services (serverless) endpoints use the OpenAI-compatible /openai/v1 path.
             return OpenAI(
                 api_key=foundry_settings["api_key"],
-                base_url=f"{base}/models",
-                default_headers={"api-key": foundry_settings["api_key"]},
-                default_query={"api-version": foundry_settings["api_version"]},
+                base_url=_normalize_ai_services_openai_base(foundry_settings["endpoint"]),
             )
 
         return AzureOpenAI(

@@ -39,6 +39,9 @@ Notes:
 - Prompt `name` values include version in display text for user-facing selection surfaces.
 - Staging prompt markdown filenames are normalized with version suffixes during reload.
 - Correction sanitation in processing paths blocks duplicate terminal punctuation artifacts (for example `..`) when list-item period fixes are augmented and applied.
+- Correction post-processing mode is controlled by `AI Only Corrections` in `readme.md` runtime configuration and is shared across CLI and web runs.
+- Objective punctuation guardrails apply in both modes and drop invalid terminal appends such as `?.`, `!.`, and `:.`.
+- Empty correction responses on non-trivial inputs can trigger one low-temperature retry when `Retry On Empty Corrections: true` is set in `readme.md`.
 
 ### GET /api/models?provider=<provider_key>
 
@@ -73,7 +76,8 @@ Returns provider connectivity/config snapshots.
 
 Notes:
 - For `azureAiFoundry`, endpoint/model settings are environment-only.
-- Recommended setup on Windows uses `python setup_foundry_env.py`, which provides list/add/edit/remove/test actions and writes the required environment variables.
+- Recommended setup on Windows uses `python setup_foundry_env.py`, which provides list/add/edit/remove/test actions and writes the required environment variables to both USER and MACHINE scopes by default.
+- Run setup from an elevated session, then restart the service/app so all users see the same profile set.
 - Single-profile mode uses `AZURE_AI_FOUNDRY_API_KEY`, `AZURE_AI_FOUNDRY_ENDPOINT`, `AZURE_AI_FOUNDRY_API_VERSION`, `AZURE_AI_FOUNDRY_MODEL_NAME`.
 - Multi-profile mode uses `AZURE_AI_FOUNDRY_PROFILE_IDS` and per-profile variables (`AZURE_AI_FOUNDRY_<PROFILE>_API_KEY`, `_ENDPOINT`, `_API_VERSION`, `_MODEL_NAME`, `_DISPLAY_NAME`, `_VENDOR`).
 
@@ -237,6 +241,12 @@ Kind values:
 
 Response fields:
 - content
+
+Raw log behavior:
+- `kind=raw` returns content from `output/llm_raw_output.log`.
+- Each raw entry includes `--- INPUT ---` and `--- OUTPUT ---` blocks.
+- Each raw entry includes `input_preview` and `output_preview` lines near the end of the entry for tail readability.
+- The raw log file is capped at 10 MB and older content is trimmed automatically.
 
 ## Remote Debug Endpoints
 
