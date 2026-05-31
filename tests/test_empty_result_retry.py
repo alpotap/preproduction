@@ -105,6 +105,50 @@ class EmptyResultRetryTests(unittest.TestCase):
         self.assertEqual([], result)
         self.assertEqual(1, len(client.chat.completions.calls))
 
+    def test_max_passes_one_blocks_empty_retry(self):
+        text = "\n".join(
+            [
+                "Why did degradation start at a specific time?",
+                "Does a specific transaction behave differently under peak load?",
+                "Is there a hidden relationship between throughput and failures?",
+                "These types of questions require custom prompts for investigation.",
+                "What changed at that point?",
+                "Which metrics deviated simultaneously?",
+                "This is useful for analyzing spikes or sudden instability.",
+                "Performance engineers validate assumptions across multiple metrics.",
+                "Compare behavior across runs and evaluate regressions.",
+                "Time-focused investigations often need correlation between response time, throughput, and host metrics.",
+            ]
+        )
+        config = self._base_config()
+        config["llm_max_passes"] = 1
+        client = _FakeClient([_FakeResponse("[]", prompt_tokens=10, completion_tokens=2)])
+
+        result, _prompt_tokens, _completion_tokens, _llm_time = get_corrections_from_llm(text, config, client)
+
+        self.assertEqual([], result)
+        self.assertEqual(1, len(client.chat.completions.calls))
+
+    def test_max_passes_one_skips_json_retry_loop(self):
+        text = "Non-trivial text with enough words to avoid edge behavior. " * 20
+        config = self._base_config()
+        config["llm_max_passes"] = 1
+        client = _FakeClient(
+            [
+                _FakeResponse("not-json", prompt_tokens=8, completion_tokens=1),
+                _FakeResponse(
+                    '[{"explanation":"Missing period.","original":"Define scope","corrected":"Define scope."}]',
+                    prompt_tokens=8,
+                    completion_tokens=2,
+                ),
+            ]
+        )
+
+        result, _prompt_tokens, _completion_tokens, _llm_time = get_corrections_from_llm(text, config, client)
+
+        self.assertEqual([], result)
+        self.assertEqual(1, len(client.chat.completions.calls))
+
 
 if __name__ == "__main__":
     unittest.main()

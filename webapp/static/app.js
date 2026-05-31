@@ -29,6 +29,7 @@ const elements = {
   promptSelect: document.getElementById('promptSelect'),
   providerSelect: document.getElementById('providerSelect'),
   modelSelect: document.getElementById('modelSelect'),
+  llmMaxPassesInput: document.getElementById('llmMaxPassesInput'),
   outputTypeList: document.getElementById('outputTypeList'),
   promptTooltipText: document.getElementById('promptTooltipText'),
   enqueueJobButton: document.getElementById('enqueueJobButton'),
@@ -137,6 +138,21 @@ function setMessage(target, message, isError = false) {
   target.style.color = isError ? '#b52121' : '';
 }
 
+function parseLlmMaxPassesValue(rawValue) {
+  const value = String(rawValue ?? '').trim();
+  if (!value) {
+    return null;
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new Error('Max LLM Passes must be a whole number between 1 and 5.');
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 5) {
+    throw new Error('Max LLM Passes must be between 1 and 5.');
+  }
+  return parsed;
+}
+
 function updateWindowLayoutClass() {
   const threshold = (window.screen?.availWidth || window.innerWidth) * 0.5;
   document.body.classList.toggle('wide-window', window.innerWidth >= threshold);
@@ -199,6 +215,11 @@ function renderCapabilities() {
       elements.providerSelect.value = providers[0].key;
     }
   }
+
+  const configuredPasses = Number(config.llmMaxPasses || 2);
+  elements.llmMaxPassesInput.value = Number.isFinite(configuredPasses)
+    ? String(configuredPasses)
+    : '2';
 
   // Load output types from sessionStorage or default to ["Hybrid"]
   let sessionOutputTypes = null;
@@ -286,10 +307,13 @@ async function persistPreferences(overrides = {}) {
   sessionStorage.setItem('sessionPromptKey', JSON.stringify(promptKey));
   sessionStorage.setItem('sessionOutputTypes', JSON.stringify(outputTypes));
 
+  const llmMaxPasses = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
+
   // Still persist provider and model to server for broader configuration
   const payload = {
     provider: elements.providerSelect.value || null,
     model: elements.modelSelect.value || null,
+    llmMaxPasses,
     ...overrides,
   };
 
@@ -302,6 +326,9 @@ async function persistPreferences(overrides = {}) {
   if (state.capabilities?.config) {
     state.capabilities.config.llmProvider = payload.provider || state.capabilities.config.llmProvider;
     state.capabilities.config.llmModel = payload.model || state.capabilities.config.llmModel;
+    if (payload.llmMaxPasses !== null && payload.llmMaxPasses !== undefined) {
+      state.capabilities.config.llmMaxPasses = payload.llmMaxPasses;
+    }
   }
 }
 
@@ -481,6 +508,14 @@ function selectAllInputFiles(checked) {
 }
 
 async function enqueueJob() {
+  let llmMaxPasses = null;
+  try {
+    llmMaxPasses = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
+  } catch (error) {
+    setMessage(elements.jobMessage, error.message, true);
+    return;
+  }
+
   const payload = {
     taskType: elements.taskType.value,
     folder: elements.folderSelect.value,
@@ -488,6 +523,7 @@ async function enqueueJob() {
     outputTypes: selectedOutputTypes(),
     provider: elements.providerSelect.value,
     model: elements.modelSelect.value || null,
+    llmMaxPasses,
     urls: elements.urlsInput.value,
     selectedFiles: selectedInputFiles(),
   };
@@ -777,6 +813,20 @@ function bindEvents() {
       await persistPreferences();
     } catch (error) {
       setMessage(elements.jobMessage, `Could not save model preference: ${error.message}`, true);
+    }
+  });
+  elements.llmMaxPassesInput.addEventListener('change', async () => {
+    try {
+      const parsed = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
+      if (parsed === null) {
+        elements.llmMaxPassesInput.value = String(state.capabilities?.config?.llmMaxPasses || 2);
+        setMessage(elements.jobMessage, 'Max LLM Passes cannot be empty.', true);
+        return;
+      }
+      elements.llmMaxPassesInput.value = String(parsed);
+      await persistPreferences({ llmMaxPasses: parsed });
+    } catch (error) {
+      setMessage(elements.jobMessage, `Could not save max passes: ${error.message}`, true);
     }
   });
   elements.promptSelect.addEventListener('change', async () => {

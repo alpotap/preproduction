@@ -25,6 +25,7 @@ Returns prompts, output types, providers, and effective defaults.
 Response fields:
 - config.llmProvider
 - config.llmModel
+- config.llmMaxPasses
 - config.activePrompt
 - config.outputTypes
 - prompts[] with key, name, version, summary, details, category
@@ -41,7 +42,7 @@ Notes:
 - Correction sanitation in processing paths blocks duplicate terminal punctuation artifacts (for example `..`) when list-item period fixes are augmented and applied.
 - Correction post-processing mode is controlled by `AI Only Corrections` in `readme.md` runtime configuration and is shared across CLI and web runs.
 - Objective punctuation guardrails apply in both modes and drop invalid terminal appends such as `?.`, `!.`, and `:.`.
-- Empty correction responses on non-trivial inputs can trigger one low-temperature retry when `Retry On Empty Corrections: true` is set in `readme.md`.
+- Empty correction responses on non-trivial inputs can trigger a low-temperature retry when `Retry On Empty Corrections: true` is set in `readme.md`, but that retry is still bounded by `LLM Max Passes`.
 
 ### GET /api/models?provider=<provider_key>
 
@@ -61,6 +62,7 @@ Request body:
 - outputTypes: string[] | null
 - provider: string | null
 - model: string | null
+- llmMaxPasses: number | null (1-5)
 
 Response fields:
 - status
@@ -168,6 +170,7 @@ Request body:
 - outputTypes: string[] | null
 - provider: string | null
 - model: string | null
+- llmMaxPasses: number | null (1-5)
 - urls: string | null
 - selectedFiles: string[] | null
 
@@ -176,7 +179,7 @@ Response fields:
 
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
-- Job submission also persists selected provider/model/prompt/output types as shared defaults for future CLI/web sessions.
+- Job submission also persists selected provider/model/prompt/output types/max-pass budget as shared defaults for future CLI/web sessions.
 - For download_process jobs, processing is limited to newly added files for that run (for Wizard usage: files created by URL downloads); pre-existing processable files in the folder are excluded unless explicitly selected via API.
 
 In all path examples above, `input` and `output` refer to the roots defined in `paths.json`.

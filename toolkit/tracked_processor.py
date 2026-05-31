@@ -6,6 +6,7 @@ import win32com.client as win32
 
 from toolkit.document_processor import build_correction_plan
 from toolkit.document_processor import _normalize_for_matching
+from toolkit.utils import build_text_match_index, find_indexed_text_match
 
 
 WD_FIND_STOP = 0
@@ -196,33 +197,37 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
         for para in word_paragraphs:
             text = _clean_paragraph_text(para.Range.Text)
             if text:
-                paragraphs.append({"para": para, "content": text})
+                paragraphs.append(
+                    {
+                        "para": para,
+                        "content": text,
+                        "normalized_content": _normalize_for_matching(text).strip(),
+                    }
+                )
 
         print("Applying tracked changes from shared correction plan...")
 
         paragraph_cursor = 0
+        paragraph_index = build_text_match_index(paragraphs)
         for item in correction_plan:
             block_corrections = item.get("corrections", [])
             if not block_corrections:
                 continue
 
-            matched_paragraph = None
             # item["content"] is python-docx para.text (unstripped); paragraphs[]
             # content is already stripped by _clean_paragraph_text — normalise before comparing.
             item_content_clean = item["content"].strip()
             item_content_normalized = _normalize_for_matching(item["content"]).strip()
-            for idx in range(paragraph_cursor, len(paragraphs)):
-                paragraph_content_normalized = _normalize_for_matching(paragraphs[idx]["content"]).strip()
-                if (
-                    paragraphs[idx]["content"] == item_content_clean
-                    or paragraph_content_normalized == item_content_normalized
-                ):
-                    matched_paragraph = paragraphs[idx]["para"]
-                    paragraph_cursor = idx + 1
-                    break
-
-            if matched_paragraph is None:
+            match_idx = find_indexed_text_match(
+                paragraph_index,
+                item_content_clean,
+                item_content_normalized,
+                paragraph_cursor,
+            )
+            if match_idx is None:
                 continue
+            matched_paragraph = paragraphs[match_idx]["para"]
+            paragraph_cursor = match_idx + 1
 
             block_corrections.sort(
                 key=lambda corr: (

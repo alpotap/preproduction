@@ -4,6 +4,8 @@ import csv
 import ctypes
 import json
 import os
+from bisect import bisect_left
+from collections import defaultdict
 from pathlib import Path
 import re
 
@@ -16,6 +18,94 @@ WORKSPACE_ROOT = _workspace_root()
 PATHS_CONFIG_PATH = WORKSPACE_ROOT / 'paths.json'
 DEFAULT_INPUT_DIR = 'input'
 DEFAULT_OUTPUT_DIR = 'output'
+
+_WHITESPACE_RE = re.compile(r"\s+")
+_INVISIBLE_SPACE_CHARS = (
+    '\xa0',
+    '\u202f',
+    '\u2000',
+    '\u2001',
+    '\u2002',
+    '\u2003',
+    '\u2004',
+    '\u2005',
+    '\u2006',
+    '\u2007',
+    '\u2008',
+    '\u2009',
+    '\u200a',
+)
+_ZERO_WIDTH_REPLACE_WITH_SPACE = ('\u200b',)
+_ZERO_WIDTH_REMOVE = ('\u200c', '\u200d', '\ufeff')
+
+
+def normalize_space(value: str) -> str:
+    """Collapse repeated whitespace to a single space and trim ends."""
+    return _WHITESPACE_RE.sub(" ", (value or "").strip())
+
+
+def normalize_hidden_whitespace_with_count(text: str) -> tuple[str, int]:
+    """Normalize invisible Unicode whitespace and return (normalized_text, replacement_count)."""
+    if not text:
+        return text, 0
+
+    normalized = text
+    replacement_count = 0
+
+    for char in _INVISIBLE_SPACE_CHARS:
+        count = normalized.count(char)
+        if count:
+            replacement_count += count
+            normalized = normalized.replace(char, ' ')
+
+    for char in _ZERO_WIDTH_REPLACE_WITH_SPACE:
+        count = normalized.count(char)
+        if count:
+            replacement_count += count
+            normalized = normalized.replace(char, ' ')
+
+    for char in _ZERO_WIDTH_REMOVE:
+        count = normalized.count(char)
+        if count:
+            replacement_count += count
+            normalized = normalized.replace(char, '')
+
+    return normalized, replacement_count
+
+
+def normalize_hidden_whitespace(text: str) -> str:
+    """Normalize invisible Unicode whitespace and return only normalized text."""
+    normalized, _ = normalize_hidden_whitespace_with_count(text)
+    return normalized
+
+
+def build_text_match_index(rows, primary_key='content', secondary_key='normalized_content'):
+    """Build index maps for ordered matching on primary and secondary text keys."""
+    primary_positions = defaultdict(list)
+    secondary_positions = defaultdict(list)
+    for idx, row in enumerate(rows):
+        primary_positions[row[primary_key]].append(idx)
+        secondary_positions[row[secondary_key]].append(idx)
+    return {
+        'primary': primary_positions,
+        'secondary': secondary_positions,
+    }
+
+
+def find_indexed_text_match(match_index, primary_value, secondary_value, cursor):
+    """Return first matching index at or after cursor using indexed primary/secondary keys."""
+    def _next_position(candidates):
+        if not candidates:
+            return None
+        pos = bisect_left(candidates, cursor)
+        if pos >= len(candidates):
+            return None
+        return candidates[pos]
+
+    match_idx = _next_position(match_index['primary'].get(primary_value))
+    if match_idx is None:
+        match_idx = _next_position(match_index['secondary'].get(secondary_value))
+    return match_idx
 
 
 def set_windows_hidden(path: Path | str, hidden: bool = True) -> bool:
@@ -109,6 +199,7 @@ def load_config():
         'lm_studio_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
+        'llm_max_passes': 2,
         'output_types': 'inline, track_changes, hybrid',
         'ai_only_corrections': True,
         'retry_on_empty_corrections': True,

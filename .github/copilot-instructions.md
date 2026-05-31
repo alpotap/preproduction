@@ -2,6 +2,42 @@
 
 These rules are permanent and apply to all future code changes.
 
+## Fast Start For Agents
+
+- Use Python entrypoints exactly as documented in [readme.md](../readme.md).
+- CLI run: `py .\\process.py`.
+- Web run: `py .\\local_web.py` (or `run_web.bat` on Windows).
+- Install dependencies: `py -m pip install -r requirements.txt`.
+- Test suite: `python -m pytest tests -q`.
+- Focused retry test: `python -m pytest tests/test_empty_result_retry.py -q`.
+
+## Architecture Boundaries
+
+- Keep `process.py` and `local_web.py` thin; put reusable behavior in `toolkit/`.
+- Use `toolkit/engine.py` for orchestration and runtime config hydration.
+- Use `toolkit/providers.py` for provider/model resolution logic.
+- Use `toolkit/llm_service.py` for LLM calls, parsing, retry, and token accounting.
+- Use `toolkit/document_processor.py` and `toolkit/tracked_processor.py` for output rendering paths.
+- Treat `paths.json` as the source of truth for input/output roots.
+- Treat `readme.md` Runtime Configuration as the source of truth for persisted runtime defaults.
+
+## High-Risk Pitfalls
+
+- Preserve backward compatibility for CLI and web flows unless a breaking change is explicitly requested.
+- Do not introduce provider/model persistence outside existing runtime config and environment-variable paths.
+- Keep Azure AI Foundry credentials and endpoint configuration environment-driven; never hardcode secrets.
+- Keep prompt behavior and correction behavior synchronized with tests in `tests/` when changing retry or sanitation logic.
+- Keep API and UI contracts synchronized by updating [docs/api_contract.md](../docs/api_contract.md) with behavior changes.
+
+## Link-First Documentation Policy
+
+- Link to existing docs for details instead of duplicating long operational guidance.
+- Configuration and provider setup: [docs/configuration.md](../docs/configuration.md).
+- CLI workflow and troubleshooting: [docs/wizard.md](../docs/wizard.md).
+- Web workflow and service deployment: [docs/webapp.md](../docs/webapp.md).
+- API payloads and endpoint contracts: [docs/api_contract.md](../docs/api_contract.md).
+- Remote diagnostics: [docs/remote_debugging.md](../docs/remote_debugging.md).
+
 ## Code Hygiene
 
 - Remove dead code when touching related modules.

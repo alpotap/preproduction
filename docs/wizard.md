@@ -88,7 +88,8 @@ Prompts are loaded from filesystem catalogs under `prompts/prod` and `prompts/st
 
 By default, correction output uses model-provided corrections only (`AI Only Corrections: true` in `readme.md` runtime configuration), which avoids local augmentation rules and helps isolate prompt/model behavior during validation.
 Even in AI-only mode, objective output guardrails remain enabled and remove invalid terminal punctuation appends such as `?.`, `!.`, and `:.`.
-When `Retry On Empty Corrections: true`, non-trivial inputs that return `[]` are retried once at temperature `0.0`.
+`LLM Max Passes` controls the total retry budget per chunk (default `2`, allowed `1` to `5`).
+When `Retry On Empty Corrections: true`, non-trivial inputs that return `[]` can be retried at temperature `0.0` within that same pass budget.
 
 Prompt catalog behavior:
 

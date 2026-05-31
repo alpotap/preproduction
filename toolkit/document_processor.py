@@ -9,66 +9,17 @@ from docx.shared import RGBColor
 from docx.oxml.ns import qn
 from toolkit.llm_service import get_corrections_from_llm, get_text_from_llm
 from toolkit.prompts import get_prompt_max_input_words, DEFAULT_PROMPT_KEY
-
-
-def _normalize_hidden_whitespace(text: str) -> tuple[str, int]:
-    """Normalize invisible Unicode whitespace to regular spaces; return (normalized_text, count_of_replacements).
-    
-    Maps NBSP, narrow NBSP, figure space, thin space, and other invisible whitespace to regular space.
-    Also removes zero-width characters (ZWSP, ZWNJ, ZWJ, BOM).
-    """
-    if not text:
-        return text, 0
-    
-    original_text = text
-    replacement_count = 0
-    
-    # Invisible space characters to replace with regular space
-    invisible_spaces = {
-        '\xa0': ' ',      # Non-breaking space (NBSP)
-        '\u202f': ' ',    # Narrow no-break space
-        '\u2000': ' ',    # En quad
-        '\u2001': ' ',    # Em quad
-        '\u2002': ' ',    # En space
-        '\u2003': ' ',    # Em space
-        '\u2004': ' ',    # Three-per-em space
-        '\u2005': ' ',    # Four-per-em space
-        '\u2006': ' ',    # Six-per-em space
-        '\u2007': ' ',    # Figure space
-        '\u2008': ' ',    # Punctuation space
-        '\u2009': ' ',    # Thin space
-        '\u200a': ' ',    # Hair space
-    }
-    
-    for char, replacement in invisible_spaces.items():
-        if char in text:
-            text = text.replace(char, replacement)
-            replacement_count += text.count(replacement) if replacement == ' ' else 1
-    
-    # Zero-width space often acts as an invisible word separator in copied content.
-    if '\u200b' in text:
-        replacement_count += text.count('\u200b')
-        text = text.replace('\u200b', ' ')
-
-    # Other zero-width characters should be removed.
-    zero_width_chars = {
-        '\u200c',  # Zero-width non-joiner
-        '\u200d',  # Zero-width joiner
-        '\ufeff',  # Zero-width no-break space (BOM)
-    }
-
-    for char in zero_width_chars:
-        if char in text:
-            replacement_count += text.count(char)
-            text = text.replace(char, '')
-    
-    return text, replacement_count
+from toolkit.utils import (
+    build_text_match_index,
+    find_indexed_text_match,
+    normalize_hidden_whitespace,
+    normalize_hidden_whitespace_with_count,
+)
 
 
 def _normalize_for_matching(text: str) -> str:
     """Normalize text for plan-to-paragraph matching without changing visible content."""
-    normalized, _ = _normalize_hidden_whitespace(text or "")
-    return normalized
+    return normalize_hidden_whitespace(text or "")
 
 
 def _paragraph_contains_image(paragraph):
@@ -272,6 +223,17 @@ def _would_duplicate_terminal_punctuation(block_content, start, original, correc
     return block_content[boundary_index] == terminal
 
 
+def _would_create_period_before_separator(block_content, start, original, corrected):
+    """Detect if applying this correction would place a period before ',' or ':'."""
+    corrected_stripped = (corrected or "").rstrip()
+    if not corrected_stripped or corrected_stripped[-1] != ".":
+        return False
+    boundary_index = start + len(original or "")
+    if boundary_index >= len(block_content):
+        return False
+    return block_content[boundary_index] in {",", ":"}
+
+
 def _filter_corrections_for_block(block_content, corrections):
     """Return only corrections that apply to one paragraph/block of text.
 
@@ -305,6 +267,13 @@ def _filter_corrections_for_block(block_content, corrections):
             for edit in atomic_edits:
                 preferred_start = occurrence_start + edit['relative_start']
                 if _would_duplicate_terminal_punctuation(
+                    block_content,
+                    preferred_start,
+                    edit['original'],
+                    edit['corrected'],
+                ):
+                    continue
+                if _would_create_period_before_separator(
                     block_content,
                     preferred_start,
                     edit['original'],
@@ -540,7 +509,7 @@ def build_correction_plan(input_path, config, client, should_cancel=None):
             current_word_count = 0
 
         # Normalize hidden whitespace before sending to LLM (primary prevention point)
-        normalized_text, norm_count = _normalize_hidden_whitespace(para.text)
+        normalized_text, norm_count = normalize_hidden_whitespace_with_count(para.text)
         stats["hidden_chars_normalized"] += norm_count
         
         current_batch.append({'content': normalized_text})
@@ -577,6 +546,7 @@ def apply_inline_correction_plan(input_path, output_path, correction_plan, confi
         for para in all_paragraphs
         if para.text and para.text.strip()
     ]
+    paragraph_index = build_text_match_index(paragraphs)
 
     paragraph_cursor = 0
     for item in correction_plan:
@@ -584,19 +554,12 @@ def apply_inline_correction_plan(input_path, output_path, correction_plan, confi
         if not block_corrections:
             continue
 
-        matched_paragraph = None
         plan_content = item.get('content', '')
-        for idx in range(paragraph_cursor, len(paragraphs)):
-            if (
-                paragraphs[idx]['content'] == plan_content
-                or paragraphs[idx]['normalized_content'] == plan_content
-            ):
-                matched_paragraph = paragraphs[idx]['para']
-                paragraph_cursor = idx + 1
-                break
-
-        if matched_paragraph is None:
+        match_idx = find_indexed_text_match(paragraph_index, plan_content, plan_content, paragraph_cursor)
+        if match_idx is None:
             continue
+        matched_paragraph = paragraphs[match_idx]['para']
+        paragraph_cursor = match_idx + 1
 
         _apply_inline_corrections_to_paragraph(
             matched_paragraph,
@@ -1041,25 +1004,19 @@ def apply_hybrid_correction_plan(input_path, output_path, correction_plan, confi
 
     comment_collector = []
     paragraph_cursor = 0
+    paragraph_index = build_text_match_index(paragraphs)
 
     for item in correction_plan:
         block_corrections = item.get('corrections', [])
         if not block_corrections:
             continue
 
-        matched_paragraph = None
         plan_content = item.get('content', '')
-        for idx in range(paragraph_cursor, len(paragraphs)):
-            if (
-                paragraphs[idx]['content'] == plan_content
-                or paragraphs[idx]['normalized_content'] == plan_content
-            ):
-                matched_paragraph = paragraphs[idx]['para']
-                paragraph_cursor = idx + 1
-                break
-
-        if matched_paragraph is None:
+        match_idx = find_indexed_text_match(paragraph_index, plan_content, plan_content, paragraph_cursor)
+        if match_idx is None:
             continue
+        matched_paragraph = paragraphs[match_idx]['para']
+        paragraph_cursor = match_idx + 1
 
         _apply_hybrid_corrections_to_paragraph(
             matched_paragraph,

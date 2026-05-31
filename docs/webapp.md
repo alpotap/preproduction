@@ -92,13 +92,14 @@ Step-by-step job submission:
 	- URL controls are shown only when task type is **Download and process**.
 	- In **Download and process**, the job processes newly downloaded files from the provided URLs and ignores pre-existing files in the folder.
 4. Choose prompt, provider, model, and output types.
+	- In Advanced Options, set **Max LLM Passes** (`1` to `5`) to control total retry attempts per chunk.
 	- Prompt Category and Prompt selectors are shown side-by-side on desktop.
 	- Output Types are displayed in a horizontal row with responsive wrapping when space is limited.
 5. Click **Add Job To Queue**.
 
 	- Correction behavior follows shared runtime configuration in `readme.md`; `AI Only Corrections: true` keeps output strictly model-provided.
 	- Objective guardrails still remove invalid terminal punctuation appends such as `?.`, `!.`, and `:.`.
-	- `Retry On Empty Corrections: true` retries non-trivial empty correction results once at temperature `0.0`.
+	- `Retry On Empty Corrections: true` can retry non-trivial empty correction results at temperature `0.0`, but only within the configured **Max LLM Passes** budget.
 Prompt notes:
 - Prompt lists include versioned entries (baseline `1.0`).
 - Prompt catalogs are loaded from `prompts/prod` and `prompts/staging`.
@@ -110,7 +111,7 @@ Prompt notes:
 - Staging markdown filenames are normalized with version suffixes (example: `default_v1_1.prompt.md`) for easier editing.
 - Prompt labels in dropdowns include version in the prompt name.
 
-Provider/model/prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
+Provider/model/prompt/output-type/max-pass selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
 Provider choices in the wizard are filtered to configured and reachable providers only. Local providers are checked with a short timeout so unavailable hosts do not appear.
 Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
 

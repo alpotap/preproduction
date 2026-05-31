@@ -64,6 +64,7 @@ class EnqueueJobRequest(BaseModel):
     outputTypes: list[str] | None = None
     provider: str | None = None
     model: str | None = None
+    llmMaxPasses: int | None = None
     urls: str | None = None
     selectedFiles: list[str] | None = None
 
@@ -73,6 +74,16 @@ class SavePreferencesRequest(BaseModel):
     outputTypes: list[str] | None = None
     provider: str | None = None
     model: str | None = None
+    llmMaxPasses: int | None = None
+
+
+def _normalize_llm_max_passes(value: int | None) -> str | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < 1 or parsed > 5:
+        raise ValueError("llmMaxPasses must be between 1 and 5")
+    return str(parsed)
 
 
 def _build_config_updates(
@@ -80,6 +91,7 @@ def _build_config_updates(
     output_types: list[str] | None,
     provider: str | None,
     model: str | None,
+    llm_max_passes: int | None,
 ) -> dict[str, str]:
     updates: dict[str, str] = {}
 
@@ -98,6 +110,10 @@ def _build_config_updates(
         updates["llm_model"] = model_value
         if selected_provider == LM_STUDIO_PROVIDER:
             updates["lm_studio_model_name"] = model_value
+
+    max_passes_value = _normalize_llm_max_passes(llm_max_passes)
+    if max_passes_value is not None:
+        updates["llm_max_passes"] = max_passes_value
 
     return updates
 
@@ -235,6 +251,7 @@ def get_capabilities() -> dict:
             "llmModel": effective_model,
             "activePrompt": config.get("active_prompt"),
             "outputTypes": config.get("output_types"),
+            "llmMaxPasses": config.get("llm_max_passes"),
         },
         "prompts": [
             {
@@ -488,12 +505,16 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
         "selectedFiles": sorted(set(selected_files)),
     }
 
-    config_updates = _build_config_updates(
-        prompt_key=payload.promptKey,
-        output_types=selected_output_types,
-        provider=payload.provider,
-        model=payload.model,
-    )
+    try:
+        config_updates = _build_config_updates(
+            prompt_key=payload.promptKey,
+            output_types=selected_output_types,
+            provider=payload.provider,
+            model=payload.model,
+            llm_max_passes=payload.llmMaxPasses,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     save_config(config_updates)
 
     job = job_manager.enqueue(payload.taskType, folder, options)
@@ -502,12 +523,16 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
 
 @app.post("/api/preferences")
 def save_preferences(payload: SavePreferencesRequest) -> dict:
-    config_updates = _build_config_updates(
-        prompt_key=payload.promptKey,
-        output_types=payload.outputTypes,
-        provider=payload.provider,
-        model=payload.model,
-    )
+    try:
+        config_updates = _build_config_updates(
+            prompt_key=payload.promptKey,
+            output_types=payload.outputTypes,
+            provider=payload.provider,
+            model=payload.model,
+            llm_max_passes=payload.llmMaxPasses,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     save_config(config_updates)
     return {"status": "ok", "saved": sorted(config_updates.keys())}
 

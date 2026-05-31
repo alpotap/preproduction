@@ -100,6 +100,35 @@ def build_output_stem(file_path):
     return stem
 
 
+def _render_output_type(output_type, processing_file_path, output_path, correction_plan, config):
+    """Render one output type for a precomputed correction plan."""
+    processing_path = str(processing_file_path)
+    destination_path = str(output_path)
+
+    if output_type == "inline":
+        apply_inline_correction_plan(processing_path, destination_path, correction_plan, config)
+        return
+
+    if output_type == "uncommented":
+        uncommented_config = dict(config)
+        uncommented_config["add_comments"] = False
+        uncommented_config["show_deletion_markers"] = False
+        apply_inline_correction_plan(processing_path, destination_path, correction_plan, uncommented_config)
+        return
+
+    if output_type == "track_changes":
+        if process_docx_tracked_with_plan is None:
+            raise RuntimeError("Tracked mode unavailable (missing tracked_processor/pywin32).")
+        process_docx_tracked_with_plan(processing_path, destination_path, correction_plan, config)
+        return
+
+    if output_type == "hybrid":
+        apply_hybrid_correction_plan(processing_path, destination_path, correction_plan, config)
+        return
+
+    raise ValueError(f"Unsupported output type: {output_type}")
+
+
 def download_urls_to_folder(urls_file, mhtml_output_dir):
     """Download URLs from urls.txt into a selected course folder."""
     with open(urls_file, "r", encoding="utf-8") as file_handle:
@@ -341,41 +370,23 @@ def process_files(
                         _raise_if_canceled()
                         suffix = OUTPUT_TYPE_REGISTRY[output_type]["suffix"]
                         output_path = output_dir / f"{output_stem}_{prompt_abbr}_{suffix}"
-
-                        if output_type == "inline":
-                            try:
-                                apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
-                                successful_output_types.append(output_type)
-                            except Exception as e:
-                                print(f"  [!] Inline DOCX output failed: {e}")
-
-                        elif output_type == "uncommented":
-                            uncommented_config = dict(config)
-                            uncommented_config["add_comments"] = False
-                            uncommented_config["show_deletion_markers"] = False
-                            try:
-                                apply_inline_correction_plan(str(processing_file_path), str(output_path), correction_plan, uncommented_config)
-                                successful_output_types.append(output_type)
-                            except Exception as e:
-                                print(f"  [!] Uncommented DOCX output failed: {e}")
-
-                        elif output_type == "track_changes":
-                            if process_docx_tracked_with_plan is None:
-                                print("  [!] Tracked mode unavailable (missing tracked_processor/pywin32).")
+                        try:
+                            _render_output_type(
+                                output_type,
+                                processing_file_path,
+                                output_path,
+                                correction_plan,
+                                config,
+                            )
+                            successful_output_types.append(output_type)
+                        except RuntimeError as e:
+                            if output_type == "track_changes":
+                                print(f"  [!] {e}")
                                 print("      Skipping Track Changes output.")
                             else:
-                                try:
-                                    process_docx_tracked_with_plan(str(processing_file_path), str(output_path), correction_plan, config)
-                                    successful_output_types.append(output_type)
-                                except Exception as e:
-                                    print(f"  [!] Track Changes DOCX output failed: {e}")
-
-                        elif output_type == "hybrid":
-                            try:
-                                apply_hybrid_correction_plan(str(processing_file_path), str(output_path), correction_plan, config)
-                                successful_output_types.append(output_type)
-                            except Exception as e:
-                                print(f"  [!] Hybrid DOCX output failed: {e}")
+                                print(f"  [!] {output_type} DOCX output failed: {e}")
+                        except Exception as e:
+                            print(f"  [!] {output_type} DOCX output failed: {e}")
 
             except Exception as e:
                 if str(e) == "Canceled by user request":

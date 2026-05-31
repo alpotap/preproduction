@@ -7,15 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY, PROMPT_DEFINITIONS
 from toolkit.providers import resolve_model_for_request
+from toolkit.utils import normalize_hidden_whitespace, normalize_space
 
 
 RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"
+_MID_SENTENCE_PERIOD_RE = re.compile(r"\.\s[a-z]")
+_PERIOD_BEFORE_SEPARATOR_RE = re.compile(r"\.\s*[:,]")
 RAW_OUTPUT_TRACKER_MAX_BYTES = 10 * 1024 * 1024
 RAW_OUTPUT_ENTRY_MARKER = "=== LLM DEBUG ENTRY START ===\n"
-
-
-def _normalize_space(value: str) -> str:
-    return re.sub(r"\s+", " ", (value or "").strip())
 
 
 def _as_bool(value, default: bool = False) -> bool:
@@ -34,7 +33,7 @@ def _as_bool(value, default: bool = False) -> bool:
 
 def _compact_preview(value: str, max_chars: int = 320) -> str:
     """Build a single-line preview suitable for log tails."""
-    compact = _normalize_space(value)
+    compact = normalize_space(value)
     if len(compact) <= max_chars:
         return compact
     return compact[: max_chars - 3] + "..."
@@ -49,7 +48,7 @@ def _strip_terminal_punctuation(value: str) -> str:
     stripped = (value or "").rstrip()
     if stripped and stripped[-1] in ".?!,":
         stripped = stripped[:-1]
-    return _normalize_space(stripped)
+    return normalize_space(stripped)
 
 
 def _is_terminal_downgrade_to_comma(original: str, corrected: str) -> bool:
@@ -81,6 +80,18 @@ def _coerce_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _coerce_int(value, default: int = 0, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
 def _is_nontrivial_input_for_empty_retry(text: str) -> bool:
     """Retry only for substantial inputs where empty corrections are unlikely to be correct."""
     non_empty_lines = [line for line in (text or "").splitlines() if line.strip()]
@@ -105,6 +116,24 @@ def _is_missing_period_fix(original: str, corrected: str) -> bool:
     return (original or "").rstrip() + "." == (corrected or "").rstrip()
 
 
+def _introduces_mid_sentence_period(original: str, corrected: str) -> bool:
+    """Detect corrections that insert a period followed by a lowercase letter.
+
+    A period followed by a space and a lowercase letter is never valid — it indicates
+    the model split a sentence at the wrong boundary.
+    """
+    orig_count = len(_MID_SENTENCE_PERIOD_RE.findall(original or ""))
+    corr_count = len(_MID_SENTENCE_PERIOD_RE.findall(corrected or ""))
+    return corr_count > orig_count
+
+
+def _introduces_period_before_separator(original: str, corrected: str) -> bool:
+    """Detect newly introduced patterns like 'word.:' or 'word.,'."""
+    orig_count = len(_PERIOD_BEFORE_SEPARATOR_RE.findall(original or ""))
+    corr_count = len(_PERIOD_BEFORE_SEPARATOR_RE.findall(corrected or ""))
+    return corr_count > orig_count
+
+
 def _append_terminal_period_once(value: str) -> str:
     stripped = (value or "").rstrip()
     if not stripped:
@@ -112,54 +141,6 @@ def _append_terminal_period_once(value: str) -> str:
     if _last_non_space_char(stripped) in ".?!,:;":
         return stripped
     return stripped + "."
-
-
-def _normalize_hidden_whitespace_for_comparison(text: str) -> str:
-    """Normalize invisible Unicode whitespace for comparison purposes only.
-    
-    Returns text with invisible spaces converted to regular spaces and zero-width chars removed.
-    Used to detect no-op corrections caused by hidden whitespace.
-    """
-    if not text:
-        return text
-    
-    # Invisible space characters to replace with regular space
-    invisible_spaces = {
-        '\xa0': ' ',      # Non-breaking space (NBSP)
-        '\u202f': ' ',    # Narrow no-break space
-        '\u2000': ' ',    # En quad
-        '\u2001': ' ',    # Em quad
-        '\u2002': ' ',    # En space
-        '\u2003': ' ',    # Em space
-        '\u2004': ' ',    # Three-per-em space
-        '\u2005': ' ',    # Four-per-em space
-        '\u2006': ' ',    # Six-per-em space
-        '\u2007': ' ',    # Figure space
-        '\u2008': ' ',    # Punctuation space
-        '\u2009': ' ',    # Thin space
-        '\u200a': ' ',    # Hair space
-    }
-    
-    for char, replacement in invisible_spaces.items():
-        if char in text:
-            text = text.replace(char, replacement)
-    
-    # Zero-width space can represent an invisible separator in copied text.
-    if '\u200b' in text:
-        text = text.replace('\u200b', ' ')
-
-    # Other zero-width characters should be removed.
-    zero_width_chars = {
-        '\u200c',  # Zero-width non-joiner
-        '\u200d',  # Zero-width joiner
-        '\ufeff',  # Zero-width no-break space (BOM)
-    }
-
-    for char in zero_width_chars:
-        if char in text:
-            text = text.replace(char, '')
-    
-    return text
 
 
 def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, int, int, int]:
@@ -173,13 +154,18 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
         corrected = str(entry.get("corrected") or original)
         if not original:
             continue
-        if _is_terminal_downgrade_to_comma(original, corrected) or _is_invalid_terminal_period_append(original, corrected):
+        if (
+            _is_terminal_downgrade_to_comma(original, corrected)
+            or _is_invalid_terminal_period_append(original, corrected)
+            or _introduces_mid_sentence_period(original, corrected)
+            or _introduces_period_before_separator(original, corrected)
+        ):
             dropped_terminal_downgrades += 1
             continue
         
         # Drop corrections where original and corrected are identical after hidden-whitespace normalization
         # (these are false positives from invisible Unicode spaces in input)
-        if _normalize_hidden_whitespace_for_comparison(original) == _normalize_hidden_whitespace_for_comparison(corrected):
+        if normalize_hidden_whitespace(original) == normalize_hidden_whitespace(corrected):
             dropped_hidden_whitespace_noops += 1
             continue
         
@@ -199,7 +185,7 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
     if detected_missing_period_issue:
         existing_originals = {item.get("original", "") for item in sanitized}
         existing_missing_period_fixes = {
-            _normalize_space(item.get("original", ""))
+            normalize_space(item.get("original", ""))
             for item in sanitized
             if _is_missing_period_fix(item.get("original", ""), item.get("corrected", ""))
         }
@@ -210,7 +196,7 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
                 continue
             if line in existing_originals:
                 continue
-            normalized_line = _normalize_space(line)
+            normalized_line = normalize_space(line)
             if normalized_line in existing_missing_period_fixes:
                 continue
             corrected_line = _append_terminal_period_once(line)
@@ -243,6 +229,10 @@ def _sanitize_corrections_ai_only(result: list) -> list[dict]:
         if _is_terminal_downgrade_to_comma(original, corrected):
             continue
         if _is_invalid_terminal_period_append(original, corrected):
+            continue
+        if _introduces_mid_sentence_period(original, corrected):
+            continue
+        if _introduces_period_before_separator(original, corrected):
             continue
         sanitized.append(
             {
@@ -446,7 +436,7 @@ def _response_looks_truncated_json(content: str) -> bool:
     return False
 
 
-def get_corrections_from_llm(text, config, client, _allow_empty_retry=True):
+def get_corrections_from_llm(text, config, client, _allow_empty_retry=True, _remaining_passes=None):
     """Sends text to the LLM and returns corrections, input/output tokens, and duration."""
     
     # Load prompt from prompts.py based on config, fallback to default if key missing
@@ -457,7 +447,8 @@ def get_corrections_from_llm(text, config, client, _allow_empty_retry=True):
     
     prompt = prompt_template.format(language=config['language'], text=text)
 
-    max_retries = 3
+    configured_max_passes = _coerce_int(config.get("llm_max_passes"), default=2, minimum=1, maximum=5)
+    max_retries = _coerce_int(_remaining_passes, default=configured_max_passes, minimum=1)
     resolved_model = resolve_model_for_request(config.get('llm_provider', ''), config.get('llm_model', ''), config)
     for attempt in range(max_retries):
         prompt_tokens = 0
@@ -511,6 +502,9 @@ def get_corrections_from_llm(text, config, client, _allow_empty_retry=True):
                 and not result
                 and _is_nontrivial_input_for_empty_retry(text)
             ):
+                remaining_passes = max_retries - (attempt + 1)
+                if remaining_passes <= 0:
+                    return result, prompt_tokens, completion_tokens, llm_time
                 print("  [i] Empty correction list on non-trivial input; retrying once at temperature 0.0.")
                 retry_config = dict(config)
                 retry_config["llm_temperature"] = 0.0
@@ -519,6 +513,7 @@ def get_corrections_from_llm(text, config, client, _allow_empty_retry=True):
                     retry_config,
                     client,
                     _allow_empty_retry=False,
+                    _remaining_passes=remaining_passes,
                 )
                 return (
                     retry_result,
