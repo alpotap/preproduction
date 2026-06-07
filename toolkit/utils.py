@@ -199,10 +199,11 @@ def load_config():
         'lm_studio_model_name': '',
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
-        'llm_max_passes': 2,
+        'llm_max_passes': 1,
         'output_types': 'inline, track_changes, hybrid',
         'ai_only_corrections': True,
         'retry_on_empty_corrections': True,
+        'notify_terminal_punctuation': True,
     }
     readme_path = WORKSPACE_ROOT / 'readme.md'
     if not readme_path.exists():

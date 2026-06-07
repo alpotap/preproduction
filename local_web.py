@@ -65,6 +65,7 @@ class EnqueueJobRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     llmMaxPasses: int | None = None
+    notifyTerminalPunctuation: bool | None = None
     urls: str | None = None
     selectedFiles: list[str] | None = None
 
@@ -75,6 +76,7 @@ class SavePreferencesRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     llmMaxPasses: int | None = None
+    notifyTerminalPunctuation: bool | None = None
 
 
 def _normalize_llm_max_passes(value: int | None) -> str | None:
@@ -92,6 +94,7 @@ def _build_config_updates(
     provider: str | None,
     model: str | None,
     llm_max_passes: int | None,
+    notify_terminal_punctuation: bool | None,
 ) -> dict[str, str]:
     updates: dict[str, str] = {}
 
@@ -114,6 +117,9 @@ def _build_config_updates(
     max_passes_value = _normalize_llm_max_passes(llm_max_passes)
     if max_passes_value is not None:
         updates["llm_max_passes"] = max_passes_value
+
+    if notify_terminal_punctuation is not None:
+        updates["notify_terminal_punctuation"] = "true" if notify_terminal_punctuation else "false"
 
     return updates
 
@@ -252,6 +258,7 @@ def get_capabilities() -> dict:
             "activePrompt": config.get("active_prompt"),
             "outputTypes": config.get("output_types"),
             "llmMaxPasses": config.get("llm_max_passes"),
+            "notifyTerminalPunctuation": bool(config.get("notify_terminal_punctuation", True)),
         },
         "prompts": [
             {
@@ -501,6 +508,7 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
         "outputTypes": selected_output_types,
         "provider": payload.provider,
         "model": payload.model,
+        "notifyTerminalPunctuation": payload.notifyTerminalPunctuation,
         "urls": payload.urls or "",
         "selectedFiles": sorted(set(selected_files)),
     }
@@ -512,6 +520,7 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
             provider=payload.provider,
             model=payload.model,
             llm_max_passes=payload.llmMaxPasses,
+            notify_terminal_punctuation=payload.notifyTerminalPunctuation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -530,6 +539,7 @@ def save_preferences(payload: SavePreferencesRequest) -> dict:
             provider=payload.provider,
             model=payload.model,
             llm_max_passes=payload.llmMaxPasses,
+            notify_terminal_punctuation=payload.notifyTerminalPunctuation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

@@ -90,6 +90,15 @@ def _extract_json_object(content: str) -> dict:
     return json.loads(content[start : end + 1])
 
 
+def _is_max_tokens_unsupported_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return (
+        "unsupported parameter" in message
+        and "max_tokens" in message
+        and "max_completion_tokens" in message
+    )
+
+
 def run_consistency_analysis(metadata: dict, config: dict) -> dict:
     provider = normalize_provider(config.get("llm_provider", OLLAMA_PROVIDER))
     model_name = resolve_model_name(config)
@@ -98,12 +107,24 @@ def run_consistency_analysis(metadata: dict, config: dict) -> dict:
 
     client = create_client(provider, config)
     prompt = build_llm_prompt(metadata)
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=min(float(config.get("llm_temperature", 0.1)), 0.3),
-        max_tokens=max(int(config.get("llm_max_tokens", 2000)), 2000),
-    )
+    temperature = min(float(config.get("llm_temperature", 0.1)), 0.3)
+    token_budget = max(int(config.get("llm_max_tokens", 2000)), 2000)
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=token_budget,
+        )
+    except Exception as exc:
+        if not _is_max_tokens_unsupported_error(exc):
+            raise
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_completion_tokens=token_budget,
+        )
 
     content = (response.choices[0].message.content or "").strip()
     result = _extract_json_object(content)

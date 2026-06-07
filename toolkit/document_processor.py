@@ -234,6 +234,38 @@ def _would_create_period_before_separator(block_content, start, original, correc
     return block_content[boundary_index] in {",", ":"}
 
 
+def _find_sentence_comment_boundary(text, search_start):
+    """Return index immediately after the next sentence terminal, else end of text."""
+    value = text or ""
+    start = max(0, int(search_start or 0))
+    for idx in range(start, len(value)):
+        if value[idx] in ".?!":
+            return idx + 1
+    return len(value)
+
+
+def _emit_text_with_comment_boundaries(
+    text,
+    slice_start,
+    slice_end,
+    pending_comments,
+    emit_text,
+    emit_comment,
+):
+    """Emit text slice and inject pending comments at configured boundary indices."""
+    cursor = slice_start
+    while pending_comments and pending_comments[0][0] <= slice_end:
+        boundary, comment_text = pending_comments.pop(0)
+        boundary = max(cursor, min(boundary, slice_end))
+        if boundary > cursor:
+            emit_text(text[cursor:boundary])
+        emit_comment(comment_text)
+        cursor = boundary
+
+    if slice_end > cursor:
+        emit_text(text[cursor:slice_end])
+
+
 def _filter_corrections_for_block(block_content, corrections):
     """Return only corrections that apply to one paragraph/block of text.
 
@@ -340,6 +372,8 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
 
     block_corrections.sort(key=lambda item: _correction_sort_key(block_content, item))
     last_end = 0
+    pending_comments = []
+    seen_comments = set()
     for corr in block_corrections:
         orig = corr['original']
         start = _resolve_correction_start(
@@ -352,8 +386,14 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
             continue
         end = start + len(orig)
 
-        if block_content[last_end:start]:
-            _add_run_elem(block_content[last_end:start])
+        _emit_text_with_comment_boundaries(
+            block_content,
+            last_end,
+            start,
+            pending_comments,
+            _add_run_elem,
+            lambda comment_text: _add_run_elem(f" [{comment_text}]", italic=True, color='0000FF'),
+        )
 
         corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
         matcher = difflib.SequenceMatcher(None, orig, corrected_text)
@@ -374,14 +414,31 @@ def _rewrite_paragraph_preserving_images(para, block_content, block_corrections,
                     _add_run_elem(deleted_marker, color='FF0000', strike=True)
 
         if config.get('add_comments', True):
-            explanation = corr.get('explanation', '').strip()
-            if explanation:
-                _add_run_elem(f" [{explanation}]", italic=True, color='0000FF')
+            explanation = _filter_comment_explanation(corr.get('explanation', ''), config).strip()
+            if explanation and explanation not in seen_comments:
+                seen_comments.add(explanation)
+                boundary = _find_sentence_comment_boundary(block_content, end)
+                pending_comments.append((boundary, explanation))
+                pending_comments.sort(key=lambda item: item[0])
+                _emit_text_with_comment_boundaries(
+                    block_content,
+                    end,
+                    end,
+                    pending_comments,
+                    _add_run_elem,
+                    lambda comment_text: _add_run_elem(f" [{comment_text}]", italic=True, color='0000FF'),
+                )
 
         last_end = end
 
-    if block_content[last_end:]:
-        _add_run_elem(block_content[last_end:])
+    _emit_text_with_comment_boundaries(
+        block_content,
+        last_end,
+        len(block_content),
+        pending_comments,
+        _add_run_elem,
+        lambda comment_text: _add_run_elem(f" [{comment_text}]", italic=True, color='0000FF'),
+    )
 
     for _idx, r_elem in drawing_nodes:
         p.append(r_elem)
@@ -422,6 +479,14 @@ def _apply_inline_corrections_to_paragraph(para, block_content, block_correction
     block_corrections.sort(key=lambda item: _correction_sort_key(block_content, item))
 
     last_end = 0
+    pending_comments = []
+    seen_comments = set()
+
+    def _emit_comment_run(comment_text):
+        exp_run = para.add_run(f" [{comment_text}]")
+        exp_run.italic = True
+        exp_run.font.color.rgb = RGBColor(0, 0, 255)
+
     for corr in block_corrections:
         orig = corr['original']
         start = _resolve_correction_start(
@@ -434,7 +499,14 @@ def _apply_inline_corrections_to_paragraph(para, block_content, block_correction
             continue
 
         end = start + len(orig)
-        para.add_run(block_content[last_end:start])
+        _emit_text_with_comment_boundaries(
+            block_content,
+            last_end,
+            start,
+            pending_comments,
+            para.add_run,
+            _emit_comment_run,
+        )
 
         corrected_text = _preserve_soft_breaks(orig, corr.get('corrected', orig))
         matcher = difflib.SequenceMatcher(None, orig, corrected_text)
@@ -457,15 +529,31 @@ def _apply_inline_corrections_to_paragraph(para, block_content, block_correction
                     deleted_run.font.color.rgb = RGBColor(255, 0, 0)
 
         if config.get('add_comments', True):
-            explanation = corr.get('explanation', '').strip()
-            if explanation:
-                exp_run = para.add_run(f" [{explanation}]")
-                exp_run.italic = True
-                exp_run.font.color.rgb = RGBColor(0, 0, 255)
+            explanation = _filter_comment_explanation(corr.get('explanation', ''), config).strip()
+            if explanation and explanation not in seen_comments:
+                seen_comments.add(explanation)
+                boundary = _find_sentence_comment_boundary(block_content, end)
+                pending_comments.append((boundary, explanation))
+                pending_comments.sort(key=lambda item: item[0])
+                _emit_text_with_comment_boundaries(
+                    block_content,
+                    end,
+                    end,
+                    pending_comments,
+                    para.add_run,
+                    _emit_comment_run,
+                )
 
         last_end = end
 
-    para.add_run(block_content[last_end:])
+    _emit_text_with_comment_boundaries(
+        block_content,
+        last_end,
+        len(block_content),
+        pending_comments,
+        para.add_run,
+        _emit_comment_run,
+    )
 
 
 def build_correction_plan(input_path, config, client, should_cancel=None):
@@ -807,6 +895,21 @@ _COMMENTS_CONTENT_TYPE = (
 _COMMENTS_REL_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 )
+TERMINAL_PUNCTUATION_EXPLANATION = "Missing terminal period in sentence-style list item."
+
+
+def _filter_comment_explanation(explanation, config):
+    """Filter explanation text based on runtime notification preferences."""
+    raw = str(explanation or "").strip()
+    if not raw:
+        return ""
+    if config.get("notify_terminal_punctuation", True):
+        return raw
+
+    # Preserve any non-terminal-punctuation explanation fragments.
+    parts = [part.strip() for part in raw.split("|") if part.strip()]
+    kept = [part for part in parts if part != TERMINAL_PUNCTUATION_EXPLANATION]
+    return " | ".join(kept)
 
 
 def _apply_hybrid_corrections_to_paragraph(para, block_content, block_corrections, config, comment_collector):
@@ -822,9 +925,9 @@ def _apply_hybrid_corrections_to_paragraph(para, block_content, block_correction
         # Gather all explanations and attach them as a single comment spanning the
         # paragraph, since individual run anchoring is not feasible after the rewrite.
         explanations = [
-            corr.get('explanation', '').strip()
+            _filter_comment_explanation(corr.get('explanation', ''), config).strip()
             for corr in block_corrections
-            if corr.get('explanation', '').strip()
+            if _filter_comment_explanation(corr.get('explanation', ''), config).strip()
         ]
         if explanations:
             p = para._p
@@ -865,7 +968,7 @@ def _apply_hybrid_corrections_to_paragraph(para, block_content, block_correction
         if prefix:
             para.add_run(prefix)
 
-        explanation = corr.get('explanation', '').strip()
+        explanation = _filter_comment_explanation(corr.get('explanation', ''), config).strip()
         comment_id = None
         if explanation:
             comment_id = len(comment_collector)

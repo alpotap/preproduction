@@ -402,6 +402,15 @@ def _extract_azure_deployment_from_endpoint(endpoint: str) -> str:
     return rest.split("/", 1)[0].split("?", 1)[0].strip()
 
 
+def _is_max_tokens_unsupported_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return (
+        "unsupported parameter" in message
+        and "max_tokens" in message
+        and "max_completion_tokens" in message
+    )
+
+
 def test_entry(entry: dict[str, str]) -> None:
     print("")
     print(f"Testing '{entry['display_name']}'...")
@@ -430,11 +439,20 @@ def test_entry(entry: dict[str, str]) -> None:
                 api_version=entry["api_version"],
             )
 
-        response = client.chat.completions.create(
-            model=request_model,
-            messages=[{"role": "user", "content": "Reply with: OK"}],
-            max_tokens=10,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=request_model,
+                messages=[{"role": "user", "content": "Reply with: OK"}],
+                max_tokens=10,
+            )
+        except Exception as exc:
+            if not _is_max_tokens_unsupported_error(exc):
+                raise
+            response = client.chat.completions.create(
+                model=request_model,
+                messages=[{"role": "user", "content": "Reply with: OK"}],
+                max_completion_tokens=10,
+            )
         content = ""
         if response.choices:
             content = (response.choices[0].message.content or "").strip()

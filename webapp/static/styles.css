@@ -467,6 +467,35 @@ textarea {
   white-space: nowrap;
 }
 
+.notify-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.notify-toggle-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.radio-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+}
+
+.inline-radio-item {
+  gap: 6px;
+}
+
+.radio-item input {
+  width: auto;
+  margin: 0;
+}
+
 .checkbox-item {
   display: flex;
   gap: 10px;

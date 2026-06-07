@@ -6,6 +6,7 @@ import win32com.client as win32
 
 from toolkit.document_processor import build_correction_plan
 from toolkit.document_processor import _normalize_for_matching
+from toolkit.document_processor import _filter_comment_explanation
 from toolkit.utils import build_text_match_index, find_indexed_text_match
 
 
@@ -140,7 +141,16 @@ def _apply_diff_to_range(word_doc, target_range, original, corrected):
         edit_range.Text = replacement_text
 
 
-def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, explanation, add_comments, preferred_start_clean=None):
+def _apply_correction_to_paragraph(
+    word_doc,
+    paragraph,
+    original,
+    corrected,
+    explanation,
+    add_comments,
+    notify_terminal_punctuation,
+    preferred_start_clean=None,
+):
     """Apply one correction to a Word paragraph with Track Changes enabled."""
     if not original:
         return False
@@ -169,9 +179,14 @@ def _apply_correction_to_paragraph(word_doc, paragraph, original, corrected, exp
     if target is None:
         return False
 
-    if add_comments and explanation:
+    filtered_explanation = _filter_comment_explanation(
+        explanation,
+        {"notify_terminal_punctuation": notify_terminal_punctuation},
+    ).strip()
+
+    if add_comments and filtered_explanation:
         try:
-            word_doc.Comments.Add(Range=target, Text=explanation)
+            word_doc.Comments.Add(Range=target, Text=filtered_explanation)
         except Exception:
             pass
 
@@ -261,6 +276,7 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
                     corrected=corr.get("corrected", original),
                     explanation=explanation,
                     add_comments=config.get("add_comments", True),
+                    notify_terminal_punctuation=config.get("notify_terminal_punctuation", True),
                     preferred_start_clean=expected_start,
                 )
 

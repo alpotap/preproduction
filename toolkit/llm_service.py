@@ -436,6 +436,36 @@ def _response_looks_truncated_json(content: str) -> bool:
     return False
 
 
+def _is_max_tokens_unsupported_error(exc: Exception) -> bool:
+    """Return True when provider rejects max_tokens for current model family."""
+    message = str(exc or "").lower()
+    return (
+        "unsupported parameter" in message
+        and "max_tokens" in message
+        and "max_completion_tokens" in message
+    )
+
+
+def _chat_completion_with_token_fallback(client, model, messages, temperature, token_budget):
+    """Call chat completions with backward/forward token parameter compatibility."""
+    try:
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=token_budget,
+        )
+    except Exception as exc:
+        if not _is_max_tokens_unsupported_error(exc):
+            raise
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_completion_tokens=token_budget,
+        )
+
+
 def get_corrections_from_llm(text, config, client, _allow_empty_retry=True, _remaining_passes=None):
     """Sends text to the LLM and returns corrections, input/output tokens, and duration."""
     
@@ -457,11 +487,12 @@ def get_corrections_from_llm(text, config, client, _allow_empty_retry=True, _rem
         content = ""
         llm_start_time = time.time()
         try:
-            response = client.chat.completions.create(
+            response = _chat_completion_with_token_fallback(
+                client=client,
                 model=resolved_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=config['llm_temperature'],
-                max_tokens=config['llm_max_tokens']
+                token_budget=config['llm_max_tokens'],
             )
             llm_time = time.time() - llm_start_time
             prompt_tokens = response.usage.prompt_tokens if response.usage else 0
@@ -561,11 +592,12 @@ def get_text_from_llm(text, config, client):
     llm_start_time = time.time()
     try:
         resolved_model = resolve_model_for_request(config.get('llm_provider', ''), config.get('llm_model', ''), config)
-        response = client.chat.completions.create(
+        response = _chat_completion_with_token_fallback(
+            client=client,
             model=resolved_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=config['llm_temperature'],
-            max_tokens=max_tokens,
+            token_budget=max_tokens,
         )
         llm_time = time.time() - llm_start_time
         input_tokens = response.usage.prompt_tokens if response.usage else 0

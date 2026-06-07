@@ -100,6 +100,17 @@
               <p>Output Types</p>
               <div id="outputTypeList" class="checkbox-grid output-types-row"></div>
             </div>
+            <div class="notify-toggle-row" role="group" aria-label="Notify about terminal punctuation">
+              <span class="notify-toggle-label">Notify About Terminal Punctuation</span>
+              <label class="radio-item inline-radio-item">
+                <input id="notifyTerminalPunctuationOn" type="radio" name="notifyTerminalPunctuation" value="on" checked>
+                <span>On</span>
+              </label>
+              <label class="radio-item inline-radio-item">
+                <input id="notifyTerminalPunctuationOff" type="radio" name="notifyTerminalPunctuation" value="off">
+                <span>Off</span>
+              </label>
+            </div>
             <button id="enqueueJobButton" class="button primary">Add Job To Queue</button>
             <div id="jobMessage" class="inline-note"></div>
           </div>
@@ -121,7 +132,7 @@
               </label>
               <label>
                 Max LLM Passes
-                <input id="llmMaxPassesInput" type="text" inputmode="numeric" placeholder="2">
+                <input id="llmMaxPassesInput" type="text" inputmode="numeric" placeholder="1">
                 <span class="inline-note">Total attempt budget per chunk (1-5), including empty-result retry.</span>
               </label>
             </div>

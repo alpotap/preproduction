@@ -30,6 +30,8 @@ const elements = {
   providerSelect: document.getElementById('providerSelect'),
   modelSelect: document.getElementById('modelSelect'),
   llmMaxPassesInput: document.getElementById('llmMaxPassesInput'),
+  notifyTerminalPunctuationOn: document.getElementById('notifyTerminalPunctuationOn'),
+  notifyTerminalPunctuationOff: document.getElementById('notifyTerminalPunctuationOff'),
   outputTypeList: document.getElementById('outputTypeList'),
   promptTooltipText: document.getElementById('promptTooltipText'),
   enqueueJobButton: document.getElementById('enqueueJobButton'),
@@ -153,6 +155,20 @@ function parseLlmMaxPassesValue(rawValue) {
   return parsed;
 }
 
+function notifyTerminalPunctuationEnabled() {
+  return Boolean(elements.notifyTerminalPunctuationOn?.checked);
+}
+
+function setNotifyTerminalPunctuation(enabled) {
+  const isEnabled = enabled !== false;
+  if (elements.notifyTerminalPunctuationOn) {
+    elements.notifyTerminalPunctuationOn.checked = isEnabled;
+  }
+  if (elements.notifyTerminalPunctuationOff) {
+    elements.notifyTerminalPunctuationOff.checked = !isEnabled;
+  }
+}
+
 function updateWindowLayoutClass() {
   const threshold = (window.screen?.availWidth || window.innerWidth) * 0.5;
   document.body.classList.toggle('wide-window', window.innerWidth >= threshold);
@@ -216,10 +232,11 @@ function renderCapabilities() {
     }
   }
 
-  const configuredPasses = Number(config.llmMaxPasses || 2);
+  const configuredPasses = Number(config.llmMaxPasses || 1);
   elements.llmMaxPassesInput.value = Number.isFinite(configuredPasses)
     ? String(configuredPasses)
-    : '2';
+    : '1';
+  setNotifyTerminalPunctuation(config.notifyTerminalPunctuation !== false);
 
   // Load output types from sessionStorage or default to ["Hybrid"]
   let sessionOutputTypes = null;
@@ -314,6 +331,7 @@ async function persistPreferences(overrides = {}) {
     provider: elements.providerSelect.value || null,
     model: elements.modelSelect.value || null,
     llmMaxPasses,
+    notifyTerminalPunctuation: notifyTerminalPunctuationEnabled(),
     ...overrides,
   };
 
@@ -328,6 +346,10 @@ async function persistPreferences(overrides = {}) {
     state.capabilities.config.llmModel = payload.model || state.capabilities.config.llmModel;
     if (payload.llmMaxPasses !== null && payload.llmMaxPasses !== undefined) {
       state.capabilities.config.llmMaxPasses = payload.llmMaxPasses;
+    }
+    if (payload.notifyTerminalPunctuation !== null && payload.notifyTerminalPunctuation !== undefined) {
+      state.capabilities.config.notifyTerminalPunctuation = payload.notifyTerminalPunctuation;
+      setNotifyTerminalPunctuation(payload.notifyTerminalPunctuation);
     }
   }
 }
@@ -524,6 +546,7 @@ async function enqueueJob() {
     provider: elements.providerSelect.value,
     model: elements.modelSelect.value || null,
     llmMaxPasses,
+    notifyTerminalPunctuation: notifyTerminalPunctuationEnabled(),
     urls: elements.urlsInput.value,
     selectedFiles: selectedInputFiles(),
   };
@@ -819,7 +842,7 @@ function bindEvents() {
     try {
       const parsed = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
       if (parsed === null) {
-        elements.llmMaxPassesInput.value = String(state.capabilities?.config?.llmMaxPasses || 2);
+        elements.llmMaxPassesInput.value = String(state.capabilities?.config?.llmMaxPasses || 1);
         setMessage(elements.jobMessage, 'Max LLM Passes cannot be empty.', true);
         return;
       }
@@ -829,6 +852,17 @@ function bindEvents() {
       setMessage(elements.jobMessage, `Could not save max passes: ${error.message}`, true);
     }
   });
+  [elements.notifyTerminalPunctuationOn, elements.notifyTerminalPunctuationOff]
+    .filter(Boolean)
+    .forEach(input => {
+      input.addEventListener('change', async () => {
+        try {
+          await persistPreferences();
+        } catch (error) {
+          setMessage(elements.jobMessage, `Could not save punctuation notification setting: ${error.message}`, true);
+        }
+      });
+    });
   elements.promptSelect.addEventListener('change', async () => {
     updatePromptTooltip();
     try {

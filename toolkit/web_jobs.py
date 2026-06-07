@@ -475,6 +475,7 @@ class JobQueueManager:
         output_types = options.get("outputTypes")
         provider = options.get("provider")
         model = options.get("model")
+        notify_terminal_punctuation = options.get("notifyTerminalPunctuation")
 
         if prompt_key:
             config["active_prompt"] = prompt_key
@@ -486,6 +487,8 @@ class JobQueueManager:
             config["llm_model"] = model
             if provider == "lm_studio":
                 config["lm_studio_model_name"] = model
+        if notify_terminal_punctuation is not None:
+            config["notify_terminal_punctuation"] = bool(notify_terminal_punctuation)
 
 
 def tail_text_file(path: Path, max_lines: int = 200) -> str:
