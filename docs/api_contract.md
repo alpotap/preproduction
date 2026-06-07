@@ -28,6 +28,7 @@ Response fields:
 - config.llmMaxPasses
 - config.activePrompt
 - config.outputTypes
+- config.notifyTerminalPunctuation
 - prompts[] with key, name, version, summary, details, category
 - promptCategories[] including `copy_editing`, `document_analysis`, `multi_document_analysis`, `staging`
 - outputTypes[] with key, label, suffix
@@ -63,6 +64,7 @@ Request body:
 - provider: string | null
 - model: string | null
 - llmMaxPasses: number | null (1-5)
+- notifyTerminalPunctuation: boolean | null
 
 Response fields:
 - status
@@ -171,6 +173,7 @@ Request body:
 - provider: string | null
 - model: string | null
 - llmMaxPasses: number | null (1-5)
+- notifyTerminalPunctuation: boolean | null
 - urls: string | null
 - selectedFiles: string[] | null
 

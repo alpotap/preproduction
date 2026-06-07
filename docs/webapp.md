@@ -112,6 +112,7 @@ Prompt notes:
 - Prompt labels in dropdowns include version in the prompt name.
 
 Provider/model/prompt/output-type/max-pass selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
+Terminal punctuation suppression strings are file-driven from `terminal_punctuation_suppress_strings.txt` in the repository root and are not configured in the web UI.
 Provider choices in the wizard are filtered to configured and reachable providers only. Local providers are checked with a short timeout so unavailable hosts do not appear.
 Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
 

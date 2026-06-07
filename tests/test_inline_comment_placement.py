@@ -1,8 +1,11 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from docx import Document
 
-from toolkit.document_processor import _apply_inline_corrections_to_paragraph
+from toolkit.document_processor import _apply_inline_corrections_to_paragraph, _filter_comment_explanation
 
 
 class InlineCommentPlacementTests(unittest.TestCase):
@@ -99,6 +102,28 @@ class InlineCommentPlacementTests(unittest.TestCase):
 
         self.assertEqual("Install package.", para.text)
         self.assertNotIn("[Missing terminal period in sentence-style list item.]", para.text)
+
+    def test_custom_terminal_punctuation_suppress_strings_are_applied(self):
+        explanation = "Model says sentence-style list item needs terminal punctuation"
+
+        with TemporaryDirectory() as tmp_dir:
+            suppress_file = Path(tmp_dir) / "terminal_punctuation_suppress_strings.txt"
+            suppress_file.write_text(
+                "sentence-style list item needs terminal punctuation\n",
+                encoding="utf-8",
+            )
+            with patch(
+                "toolkit.document_processor.TERMINAL_PUNCTUATION_SUPPRESS_STRINGS_PATH",
+                suppress_file,
+            ):
+                filtered = _filter_comment_explanation(
+                    explanation,
+                    {
+                        "notify_terminal_punctuation": False,
+                    },
+                )
+
+        self.assertEqual("", filtered)
 
 
 if __name__ == "__main__":

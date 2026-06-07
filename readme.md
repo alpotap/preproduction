@@ -165,3 +165,5 @@ LLM Max Passes: 1
 Output Types: inline, uncommented, track_changes, hybrid
 AI Only Corrections: true
 Retry On Empty Corrections: true
+
+Terminal punctuation comment suppression strings are loaded from `terminal_punctuation_suppress_strings.txt` in the repository root. Use one string per line; blank lines and lines starting with `#` are ignored.

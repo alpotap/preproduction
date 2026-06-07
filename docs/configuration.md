@@ -49,6 +49,7 @@ Current keys:
 - LLM Temperature
 - LLM Max Tokens
 - LLM Max Passes
+- Notify Terminal Punctuation
 - Output Types
 - AI Only Corrections
 - Retry On Empty Corrections
@@ -60,8 +61,10 @@ Notes:
 - `AI Only Corrections` defaults to `true` and keeps correction output strictly model-provided (no local augmentation of extra corrections).
 - Set `AI Only Corrections: false` only when you explicitly want legacy local post-processing/augmentation behavior.
 - Objective guardrails still apply in both modes: invalid terminal appends like `?.`, `!.`, and `:.` are dropped.
-- `LLM Max Passes` defaults to `2` and caps total correction attempts per chunk (allowed range `1` to `5`).
+- `LLM Max Passes` defaults to `1` and caps total correction attempts per chunk (allowed range `1` to `5`).
 - `Retry On Empty Corrections` defaults to `true`. When enabled, the low-temperature empty-result retry is counted inside `LLM Max Passes` (it is not an unlimited extra pass).
+- `Notify Terminal Punctuation` controls whether terminal-punctuation explanations are inserted as comments.
+- Terminal punctuation suppression strings are loaded from `terminal_punctuation_suppress_strings.txt` in the repository root. Use one string per line; lines starting with `#` are treated as comments.
 - `Input Directory` and `Output Directory` are no longer read from `readme.md`; use `paths.json` instead.
 - Summary report artifacts (`summary_report_state.json` and `summary_report.docx`) are generated automatically from execution statistics and do not require additional configuration keys.
 - Raw LLM logging writes both request input and response output to `output/llm_raw_output.log`, and the file is automatically trimmed to a maximum size of 10 MB.

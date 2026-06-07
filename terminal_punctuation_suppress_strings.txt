@@ -1,0 +1,7 @@
+# Terminal punctuation comment suppression strings
+# One string per line. Matching is case-insensitive substring match.
+Missing terminal period in sentence-style list item.
+Missing terminal period.
+Missing terminal punctuation at the end of a sentence.
+Missing terminal punctuation: sentence does not end with a period. List-item punctuation rule: '12' appears as a list item line but is not a complete sentence; still, if treated as sentence-style list item, it should end with terminal punctuation. Add period.
+List item is missing a terminal period.

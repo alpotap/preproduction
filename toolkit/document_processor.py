@@ -3,6 +3,7 @@
 import difflib
 import copy
 import re
+from pathlib import Path
 from lxml import etree
 from docx import Document
 from docx.shared import RGBColor
@@ -896,6 +897,50 @@ _COMMENTS_REL_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 )
 TERMINAL_PUNCTUATION_EXPLANATION = "Missing terminal period in sentence-style list item."
+DEFAULT_TERMINAL_PUNCTUATION_SUPPRESS_STRINGS = (
+    TERMINAL_PUNCTUATION_EXPLANATION,
+    "Missing terminal period.",
+)
+TERMINAL_PUNCTUATION_SUPPRESS_STRINGS_PATH = (
+    Path(__file__).resolve().parent.parent / "terminal_punctuation_suppress_strings.txt"
+)
+
+
+def _load_terminal_punctuation_suppress_strings(config):
+    """Load suppression tokens for terminal punctuation comment fragments."""
+    tokens = list(DEFAULT_TERMINAL_PUNCTUATION_SUPPRESS_STRINGS)
+
+    try:
+        if TERMINAL_PUNCTUATION_SUPPRESS_STRINGS_PATH.exists():
+            with open(TERMINAL_PUNCTUATION_SUPPRESS_STRINGS_PATH, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    split_tokens = [part.strip() for part in re.split(r"\|", line) if part.strip()]
+                    tokens.extend(split_tokens)
+    except Exception:
+        pass
+
+    normalized = []
+    seen = set()
+    for token in tokens:
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(token)
+    return normalized
+
+
+def _is_terminal_punctuation_explanation_fragment(text, config):
+    fragment = str(text or "").strip().lower()
+    if not fragment:
+        return False
+    for needle in _load_terminal_punctuation_suppress_strings(config):
+        if needle.lower() in fragment:
+            return True
+    return False
 
 
 def _filter_comment_explanation(explanation, config):
@@ -908,7 +953,7 @@ def _filter_comment_explanation(explanation, config):
 
     # Preserve any non-terminal-punctuation explanation fragments.
     parts = [part.strip() for part in raw.split("|") if part.strip()]
-    kept = [part for part in parts if part != TERMINAL_PUNCTUATION_EXPLANATION]
+    kept = [part for part in parts if not _is_terminal_punctuation_explanation_fragment(part, config)]
     return " | ".join(kept)
 
 
