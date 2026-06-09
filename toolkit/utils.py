@@ -4,6 +4,7 @@ import csv
 import ctypes
 import json
 import os
+import threading
 from bisect import bisect_left
 from collections import defaultdict
 from pathlib import Path
@@ -37,6 +38,7 @@ _INVISIBLE_SPACE_CHARS = (
 )
 _ZERO_WIDTH_REPLACE_WITH_SPACE = ('\u200b',)
 _ZERO_WIDTH_REMOVE = ('\u200c', '\u200d', '\ufeff')
+_PERFORMANCE_LOG_LOCK = threading.Lock()
 
 
 def normalize_space(value: str) -> str:
@@ -200,6 +202,8 @@ def load_config():
         'llm_temperature': 0.1,
         'llm_max_tokens': 1000,
         'llm_max_passes': 1,
+        'llm_max_concurrent_requests': 3,
+        'llm_max_parallel_files': 1,
         'output_types': 'inline, track_changes, hybrid',
         'ai_only_corrections': True,
         'retry_on_empty_corrections': True,
@@ -268,7 +272,6 @@ def save_config(config_to_save):
 
 def log_performance_stats(log_file_path, stats_data):
     """Appends performance statistics to a CSV log file."""
-    file_exists = log_file_path.exists()
     header = [
         "timestamp", "document_name", "model_used",
         "total_processing_time_s", "text_size_chars",
@@ -283,8 +286,11 @@ def log_performance_stats(log_file_path, stats_data):
         f"{stats_data['tokens_per_second']:.2f}"
     ]
 
-    with open(log_file_path, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        if not file_exists: writer.writerow(header)
-        writer.writerow(row)
+    with _PERFORMANCE_LOG_LOCK:
+        file_exists = log_file_path.exists()
+        with open(log_file_path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow(row)
     set_windows_hidden(log_file_path, hidden=True)

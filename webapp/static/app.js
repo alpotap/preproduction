@@ -30,6 +30,8 @@ const elements = {
   providerSelect: document.getElementById('providerSelect'),
   modelSelect: document.getElementById('modelSelect'),
   llmMaxPassesInput: document.getElementById('llmMaxPassesInput'),
+  llmMaxConcurrentRequestsInput: document.getElementById('llmMaxConcurrentRequestsInput'),
+  llmMaxParallelFilesInput: document.getElementById('llmMaxParallelFilesInput'),
   notifyTerminalPunctuationOn: document.getElementById('notifyTerminalPunctuationOn'),
   notifyTerminalPunctuationOff: document.getElementById('notifyTerminalPunctuationOff'),
   outputTypeList: document.getElementById('outputTypeList'),
@@ -155,6 +157,36 @@ function parseLlmMaxPassesValue(rawValue) {
   return parsed;
 }
 
+function parseLlmMaxConcurrentRequestsValue(rawValue) {
+  const value = String(rawValue ?? '').trim();
+  if (!value) {
+    return null;
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new Error('Max Concurrent LLM Requests must be a whole number between 1 and 20.');
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 20) {
+    throw new Error('Max Concurrent LLM Requests must be between 1 and 20.');
+  }
+  return parsed;
+}
+
+function parseLlmMaxParallelFilesValue(rawValue) {
+  const value = String(rawValue ?? '').trim();
+  if (!value) {
+    return null;
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new Error('Max Parallel Files must be a whole number between 1 and 8.');
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 8) {
+    throw new Error('Max Parallel Files must be between 1 and 8.');
+  }
+  return parsed;
+}
+
 function notifyTerminalPunctuationEnabled() {
   return Boolean(elements.notifyTerminalPunctuationOn?.checked);
 }
@@ -235,6 +267,14 @@ function renderCapabilities() {
   const configuredPasses = Number(config.llmMaxPasses || 1);
   elements.llmMaxPassesInput.value = Number.isFinite(configuredPasses)
     ? String(configuredPasses)
+    : '1';
+  const configuredMaxConcurrent = Number(config.llmMaxConcurrentRequests || 3);
+  elements.llmMaxConcurrentRequestsInput.value = Number.isFinite(configuredMaxConcurrent)
+    ? String(configuredMaxConcurrent)
+    : '3';
+  const configuredMaxParallelFiles = Number(config.llmMaxParallelFiles || 1);
+  elements.llmMaxParallelFilesInput.value = Number.isFinite(configuredMaxParallelFiles)
+    ? String(configuredMaxParallelFiles)
     : '1';
   setNotifyTerminalPunctuation(config.notifyTerminalPunctuation !== false);
 
@@ -325,12 +365,16 @@ async function persistPreferences(overrides = {}) {
   sessionStorage.setItem('sessionOutputTypes', JSON.stringify(outputTypes));
 
   const llmMaxPasses = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
+  const llmMaxConcurrentRequests = parseLlmMaxConcurrentRequestsValue(elements.llmMaxConcurrentRequestsInput.value);
+  const llmMaxParallelFiles = parseLlmMaxParallelFilesValue(elements.llmMaxParallelFilesInput.value);
 
   // Still persist provider and model to server for broader configuration
   const payload = {
     provider: elements.providerSelect.value || null,
     model: elements.modelSelect.value || null,
     llmMaxPasses,
+    llmMaxConcurrentRequests,
+    llmMaxParallelFiles,
     notifyTerminalPunctuation: notifyTerminalPunctuationEnabled(),
     ...overrides,
   };
@@ -346,6 +390,12 @@ async function persistPreferences(overrides = {}) {
     state.capabilities.config.llmModel = payload.model || state.capabilities.config.llmModel;
     if (payload.llmMaxPasses !== null && payload.llmMaxPasses !== undefined) {
       state.capabilities.config.llmMaxPasses = payload.llmMaxPasses;
+    }
+    if (payload.llmMaxConcurrentRequests !== null && payload.llmMaxConcurrentRequests !== undefined) {
+      state.capabilities.config.llmMaxConcurrentRequests = payload.llmMaxConcurrentRequests;
+    }
+    if (payload.llmMaxParallelFiles !== null && payload.llmMaxParallelFiles !== undefined) {
+      state.capabilities.config.llmMaxParallelFiles = payload.llmMaxParallelFiles;
     }
     if (payload.notifyTerminalPunctuation !== null && payload.notifyTerminalPunctuation !== undefined) {
       state.capabilities.config.notifyTerminalPunctuation = payload.notifyTerminalPunctuation;
@@ -531,8 +581,12 @@ function selectAllInputFiles(checked) {
 
 async function enqueueJob() {
   let llmMaxPasses = null;
+  let llmMaxConcurrentRequests = null;
+  let llmMaxParallelFiles = null;
   try {
     llmMaxPasses = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
+    llmMaxConcurrentRequests = parseLlmMaxConcurrentRequestsValue(elements.llmMaxConcurrentRequestsInput.value);
+    llmMaxParallelFiles = parseLlmMaxParallelFilesValue(elements.llmMaxParallelFilesInput.value);
   } catch (error) {
     setMessage(elements.jobMessage, error.message, true);
     return;
@@ -546,6 +600,8 @@ async function enqueueJob() {
     provider: elements.providerSelect.value,
     model: elements.modelSelect.value || null,
     llmMaxPasses,
+    llmMaxConcurrentRequests,
+    llmMaxParallelFiles,
     notifyTerminalPunctuation: notifyTerminalPunctuationEnabled(),
     urls: elements.urlsInput.value,
     selectedFiles: selectedInputFiles(),
@@ -588,10 +644,15 @@ async function enqueueJob() {
 async function refreshStatus() {
   const status = await fetchJson('/api/status');
   const currentRun = status.currentRun;
+  const telemetry = status.telemetry || {};
+  const telemetryLine = `Workers active: ${Number(telemetry.activeParallelFileWorkers || 0)} (peak ${Number(telemetry.peakParallelFileWorkers || 0)}) · LLM inflight: ${Number(telemetry.llmInflightRequests || 0)} · LLM waiters: ${Number(telemetry.llmQueueWaiters || 0)} · Avg queue wait: ${Number(telemetry.averageQueueWaitMs || 0).toFixed(2)} ms`;
   elements.heroStatus.textContent = currentRun ? currentRun.status.toUpperCase() : 'IDLE';
   elements.currentRunCard.classList.toggle('empty', !currentRun);
   if (!currentRun) {
-    elements.currentRunCard.textContent = 'No active job.';
+    elements.currentRunCard.innerHTML = `
+      <div class="run-meta">No active job.</div>
+      <div class="run-meta">${telemetryLine}</div>
+    `;
     return;
   }
   elements.currentRunCard.innerHTML = `
@@ -602,6 +663,7 @@ async function refreshStatus() {
     <div class="run-meta">Folder: ${currentRun.folder}</div>
     <div class="run-meta">Started: ${formatTimestamp(currentRun.startedAt)}</div>
     <div class="run-meta">${currentRun.currentMessage || 'Running'}</div>
+    <div class="run-meta">${telemetryLine}</div>
   `;
 }
 

@@ -41,7 +41,7 @@ For unattended web hosting on Windows, use the separate service installer descri
    - `output/<folder>/summary_report_state.json` (historical execution stats)
    - `output/<folder>/summary_report.docx` (readable report with run and category totals)
 
-10. **Save preferences** — Provider, model, prompt, and output type choices are stored for the next session and shared with the web UI for all users on the same host.
+10. **Save preferences** — Provider, model, prompt, output type, max-pass, max-concurrent-request, and max-parallel-files choices are stored for the next session and shared with the web UI for all users on the same host.
 
 ## Hidden Whitespace Handling
 

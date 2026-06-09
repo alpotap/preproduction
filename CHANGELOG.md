@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-06-08]
+
+### Added
+
+- File-driven terminal punctuation suppression list in `terminal_punctuation_suppress_strings.txt` with comment support (`#`) and one phrase per line matching.
+- Documentation coverage for local suppression-string management across runtime configuration, web usage notes, and API contract expectations.
+
+### Changed
+
+- Terminal punctuation suppression-string management moved out of UI and API payloads; processing now reads from a local server file.
+- `LLM Max Passes` default is documented and aligned at `1`.
+
+### Fixed
+
+- Azure/OpenAI compatibility for newer model families by retrying completion calls with `max_completion_tokens` when `max_tokens` is rejected.
+
+---
+
 ## [2026-05-11]
 
 ### Added

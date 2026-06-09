@@ -93,6 +93,8 @@ Step-by-step job submission:
 	- In **Download and process**, the job processes newly downloaded files from the provided URLs and ignores pre-existing files in the folder.
 4. Choose prompt, provider, model, and output types.
 	- In Advanced Options, set **Max LLM Passes** (`1` to `5`) to control total retry attempts per chunk.
+	- In Advanced Options, set **Max Concurrent LLM Requests** (`1` to `20`) to cap simultaneous model calls across the running web process.
+	- In Advanced Options, set **Max Parallel Files** (`1` to `8`) to process multiple files concurrently within one queued job.
 	- Prompt Category and Prompt selectors are shown side-by-side on desktop.
 	- Output Types are displayed in a horizontal row with responsive wrapping when space is limited.
 5. Click **Add Job To Queue**.
@@ -111,7 +113,7 @@ Prompt notes:
 - Staging markdown filenames are normalized with version suffixes (example: `default_v1_1.prompt.md`) for easier editing.
 - Prompt labels in dropdowns include version in the prompt name.
 
-Provider/model/prompt/output-type/max-pass selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
+Provider/model/prompt/output-type/max-pass/max-concurrent-request/max-parallel-files selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
 Terminal punctuation suppression strings are file-driven from `terminal_punctuation_suppress_strings.txt` in the repository root and are not configured in the web UI.
 Provider choices in the wizard are filtered to configured and reachable providers only. Local providers are checked with a short timeout so unavailable hosts do not appear.
 Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
@@ -130,6 +132,7 @@ For process jobs, each completed run also updates:
 Monitors all running and historical jobs (last 20 shown):
 
 - **Current Run** — shows active job and status message.
+	- Includes live runtime telemetry for worker activity and LLM queue health: active file workers, in-flight LLM requests, and average queue wait.
 - **Logs** — live tail of execution, performance, or raw LLM logs (10 visible lines, scrollable).
   Raw LLM log entries are stored in `output/llm_raw_output.log` with explicit `--- INPUT ---` and `--- OUTPUT ---` blocks and a 10 MB maximum file size.
 - **Queue** — compact list with Cancel (queued/running) and Retry (failed/canceled/completed) buttons.

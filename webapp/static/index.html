@@ -135,6 +135,16 @@
                 <input id="llmMaxPassesInput" type="text" inputmode="numeric" placeholder="1">
                 <span class="inline-note">Total attempt budget per chunk (1-5), including empty-result retry.</span>
               </label>
+              <label>
+                Max Concurrent LLM Requests
+                <input id="llmMaxConcurrentRequestsInput" type="text" inputmode="numeric" placeholder="3">
+                <span class="inline-note">Global in-process cap for simultaneous LLM calls (1-20).</span>
+              </label>
+              <label>
+                Max Parallel Files
+                <input id="llmMaxParallelFilesInput" type="text" inputmode="numeric" placeholder="1">
+                <span class="inline-note">How many files can process in parallel per job (1-8).</span>
+              </label>
             </div>
           </div>
         </details>

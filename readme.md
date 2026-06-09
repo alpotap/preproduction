@@ -162,8 +162,18 @@ LM Studio Model Name:
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
 LLM Max Passes: 1
+LLM Max Concurrent Requests: 3
+LLM Max Parallel Files: 1
 Output Types: inline, uncommented, track_changes, hybrid
 AI Only Corrections: true
 Retry On Empty Corrections: true
 
 Terminal punctuation comment suppression strings are loaded from `terminal_punctuation_suppress_strings.txt` in the repository root. Use one string per line; blank lines and lines starting with `#` are ignored.
+
+### Terminal Punctuation Suppression File
+
+- File path: `terminal_punctuation_suppress_strings.txt`.
+- Scope: applies to both CLI and web processing.
+- Match rule: case-insensitive substring match against explanation fragments.
+- UI/API: suppression strings are intentionally not editable through UI or API endpoints.
+- Reload behavior: changes are picked up during processing without restarting the app; edit before queueing a new job for deterministic results.

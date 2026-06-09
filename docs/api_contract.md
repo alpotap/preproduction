@@ -26,6 +26,8 @@ Response fields:
 - config.llmProvider
 - config.llmModel
 - config.llmMaxPasses
+- config.llmMaxConcurrentRequests
+- config.llmMaxParallelFiles
 - config.activePrompt
 - config.outputTypes
 - config.notifyTerminalPunctuation
@@ -64,6 +66,8 @@ Request body:
 - provider: string | null
 - model: string | null
 - llmMaxPasses: number | null (1-5)
+- llmMaxConcurrentRequests: number | null (1-20)
+- llmMaxParallelFiles: number | null (1-8)
 - notifyTerminalPunctuation: boolean | null
 
 Response fields:
@@ -73,6 +77,7 @@ Response fields:
 Notes:
 - Values are persisted to the runtime configuration in `readme.md`.
 - Azure AI Foundry endpoint/auth settings remain environment-driven; selected model defaults are persisted.
+- Terminal punctuation suppression strings are not accepted by this endpoint; they are loaded from `terminal_punctuation_suppress_strings.txt` on the server.
 
 ### GET /api/provider-status
 
@@ -173,6 +178,8 @@ Request body:
 - provider: string | null
 - model: string | null
 - llmMaxPasses: number | null (1-5)
+- llmMaxConcurrentRequests: number | null (1-20)
+- llmMaxParallelFiles: number | null (1-8)
 - notifyTerminalPunctuation: boolean | null
 - urls: string | null
 - selectedFiles: string[] | null
@@ -182,8 +189,9 @@ Response fields:
 
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
-- Job submission also persists selected provider/model/prompt/output types/max-pass budget as shared defaults for future CLI/web sessions.
+- Job submission also persists selected provider/model/prompt/output types/max-pass budget/max-concurrent-request cap/max-parallel-files setting as shared defaults for future CLI/web sessions.
 - For download_process jobs, processing is limited to newly added files for that run (for Wizard usage: files created by URL downloads); pre-existing processable files in the folder are excluded unless explicitly selected via API.
+- Terminal punctuation suppression strings are file-driven from `terminal_punctuation_suppress_strings.txt` and are not set per-job via API.
 
 In all path examples above, `input` and `output` refer to the roots defined in `paths.json`.
 
@@ -231,6 +239,11 @@ Response fields:
 - queueLength
 - queuedJobs
 - totalJobs
+- telemetry.activeParallelFileWorkers
+- telemetry.peakParallelFileWorkers
+- telemetry.llmInflightRequests
+- telemetry.llmQueueWaiters
+- telemetry.averageQueueWaitMs
 
 ### GET /api/run-state
 

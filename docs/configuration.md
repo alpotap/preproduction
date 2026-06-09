@@ -49,6 +49,8 @@ Current keys:
 - LLM Temperature
 - LLM Max Tokens
 - LLM Max Passes
+- LLM Max Concurrent Requests
+- LLM Max Parallel Files
 - Notify Terminal Punctuation
 - Output Types
 - AI Only Corrections
@@ -62,6 +64,8 @@ Notes:
 - Set `AI Only Corrections: false` only when you explicitly want legacy local post-processing/augmentation behavior.
 - Objective guardrails still apply in both modes: invalid terminal appends like `?.`, `!.`, and `:.` are dropped.
 - `LLM Max Passes` defaults to `1` and caps total correction attempts per chunk (allowed range `1` to `5`).
+- `LLM Max Concurrent Requests` defaults to `3` and caps simultaneous outbound LLM calls across the running process (allowed range `1` to `20`).
+- `LLM Max Parallel Files` defaults to `1` and controls how many files can run in parallel within a single job (allowed range `1` to `8`).
 - `Retry On Empty Corrections` defaults to `true`. When enabled, the low-temperature empty-result retry is counted inside `LLM Max Passes` (it is not an unlimited extra pass).
 - `Notify Terminal Punctuation` controls whether terminal-punctuation explanations are inserted as comments.
 - Terminal punctuation suppression strings are loaded from `terminal_punctuation_suppress_strings.txt` in the repository root. Use one string per line; lines starting with `#` are treated as comments.

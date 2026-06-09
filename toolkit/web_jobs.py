@@ -20,7 +20,9 @@ from toolkit.engine import (
     list_processable_files,
     process_files,
     run_consistency_for_course,
+    get_parallel_file_runtime_telemetry,
 )
+from toolkit.llm_service import get_llm_request_runtime_telemetry
 from toolkit.web_tools import download_url_as_mhtml
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
@@ -252,11 +254,20 @@ class JobQueueManager:
         with self._lock:
             queued = sum(1 for job in self._jobs.values() if job.status == "queued")
             running = self._jobs.get(self._current_job_id).to_dict() if self._current_job_id else None
+            parallel_metrics = get_parallel_file_runtime_telemetry()
+            llm_metrics = get_llm_request_runtime_telemetry()
             return {
                 "currentRun": running,
                 "queueLength": self._queue.qsize(),
                 "queuedJobs": queued,
                 "totalJobs": len(self._jobs),
+                "telemetry": {
+                    "activeParallelFileWorkers": parallel_metrics.get("activeParallelFileWorkers", 0),
+                    "peakParallelFileWorkers": parallel_metrics.get("peakParallelFileWorkers", 0),
+                    "llmInflightRequests": llm_metrics.get("inflight", 0),
+                    "llmQueueWaiters": llm_metrics.get("waiting", 0),
+                    "averageQueueWaitMs": llm_metrics.get("averageWaitMs", 0.0),
+                },
             }
 
     def record_line(self, job_id: str, message: str) -> None:
@@ -475,6 +486,8 @@ class JobQueueManager:
         output_types = options.get("outputTypes")
         provider = options.get("provider")
         model = options.get("model")
+        llm_max_concurrent_requests = options.get("llmMaxConcurrentRequests")
+        llm_max_parallel_files = options.get("llmMaxParallelFiles")
         notify_terminal_punctuation = options.get("notifyTerminalPunctuation")
 
         if prompt_key:
@@ -487,6 +500,16 @@ class JobQueueManager:
             config["llm_model"] = model
             if provider == "lm_studio":
                 config["lm_studio_model_name"] = model
+        if llm_max_concurrent_requests is not None:
+            try:
+                config["llm_max_concurrent_requests"] = max(1, min(20, int(llm_max_concurrent_requests)))
+            except (TypeError, ValueError):
+                pass
+        if llm_max_parallel_files is not None:
+            try:
+                config["llm_max_parallel_files"] = max(1, min(8, int(llm_max_parallel_files)))
+            except (TypeError, ValueError):
+                pass
         if notify_terminal_punctuation is not None:
             config["notify_terminal_punctuation"] = bool(notify_terminal_punctuation)
 

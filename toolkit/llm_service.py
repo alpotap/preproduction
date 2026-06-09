@@ -3,6 +3,8 @@
 import time
 import json
 import re
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from toolkit.prompts import PROMPTS, DEFAULT_PROMPT_KEY, PROMPT_DEFINITIONS
@@ -15,6 +17,77 @@ _MID_SENTENCE_PERIOD_RE = re.compile(r"\.\s[a-z]")
 _PERIOD_BEFORE_SEPARATOR_RE = re.compile(r"\.\s*[:,]")
 RAW_OUTPUT_TRACKER_MAX_BYTES = 10 * 1024 * 1024
 RAW_OUTPUT_ENTRY_MARKER = "=== LLM DEBUG ENTRY START ===\n"
+DEFAULT_LLM_MAX_CONCURRENT_REQUESTS = 3
+MIN_LLM_MAX_CONCURRENT_REQUESTS = 1
+MAX_LLM_MAX_CONCURRENT_REQUESTS = 20
+
+
+class _LlmRequestLimiter:
+    """Global in-process limiter for concurrent outbound LLM requests."""
+
+    def __init__(self, default_limit: int) -> None:
+        self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._inflight = 0
+        self._waiting = 0
+        self._limit = default_limit
+        self._grant_count = 0
+        self._queued_grant_count = 0
+        self._total_wait_ms = 0
+
+    def set_limit(self, limit: int) -> int:
+        with self._condition:
+            self._limit = max(MIN_LLM_MAX_CONCURRENT_REQUESTS, min(MAX_LLM_MAX_CONCURRENT_REQUESTS, int(limit)))
+            self._condition.notify_all()
+            return self._limit
+
+    @contextmanager
+    def acquire(self, requested_limit: int):
+        limit = self.set_limit(requested_limit)
+        wait_started = time.time()
+        with self._condition:
+            self._waiting += 1
+            while self._inflight >= self._limit:
+                self._condition.wait()
+            waited_ms = int((time.time() - wait_started) * 1000)
+            self._waiting = max(0, self._waiting - 1)
+            self._grant_count += 1
+            self._total_wait_ms += waited_ms
+            if waited_ms > 0:
+                self._queued_grant_count += 1
+            self._inflight += 1
+            inflight_now = self._inflight
+
+        try:
+            yield {
+                "limit": limit,
+                "waited_ms": waited_ms,
+                "inflight": inflight_now,
+            }
+        finally:
+            with self._condition:
+                self._inflight = max(0, self._inflight - 1)
+                self._condition.notify()
+
+    def get_metrics(self) -> dict:
+        with self._condition:
+            avg_wait_ms = (self._total_wait_ms / self._grant_count) if self._grant_count else 0.0
+            return {
+                "limit": int(self._limit),
+                "inflight": int(self._inflight),
+                "waiting": int(self._waiting),
+                "totalRequests": int(self._grant_count),
+                "queuedRequests": int(self._queued_grant_count),
+                "averageWaitMs": round(avg_wait_ms, 2),
+            }
+
+
+_LLM_REQUEST_LIMITER = _LlmRequestLimiter(DEFAULT_LLM_MAX_CONCURRENT_REQUESTS)
+
+
+def get_llm_request_runtime_telemetry() -> dict:
+    """Return runtime telemetry for global LLM request limiting."""
+    return _LLM_REQUEST_LIMITER.get_metrics()
 
 
 def _as_bool(value, default: bool = False) -> bool:
@@ -90,6 +163,15 @@ def _coerce_int(value, default: int = 0, minimum: int | None = None, maximum: in
     if maximum is not None:
         parsed = min(maximum, parsed)
     return parsed
+
+
+def _resolve_llm_max_concurrent_requests(config) -> int:
+    return _coerce_int(
+        config.get("llm_max_concurrent_requests"),
+        default=DEFAULT_LLM_MAX_CONCURRENT_REQUESTS,
+        minimum=MIN_LLM_MAX_CONCURRENT_REQUESTS,
+        maximum=MAX_LLM_MAX_CONCURRENT_REQUESTS,
+    )
 
 
 def _is_nontrivial_input_for_empty_retry(text: str) -> bool:
@@ -487,14 +569,21 @@ def get_corrections_from_llm(text, config, client, _allow_empty_retry=True, _rem
         content = ""
         llm_start_time = time.time()
         try:
-            response = _chat_completion_with_token_fallback(
-                client=client,
-                model=resolved_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=config['llm_temperature'],
-                token_budget=config['llm_max_tokens'],
-            )
-            llm_time = time.time() - llm_start_time
+            with _LLM_REQUEST_LIMITER.acquire(_resolve_llm_max_concurrent_requests(config)) as slot_info:
+                llm_start_time = time.time()
+                response = _chat_completion_with_token_fallback(
+                    client=client,
+                    model=resolved_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=config['llm_temperature'],
+                    token_budget=config['llm_max_tokens'],
+                )
+                llm_time = time.time() - llm_start_time
+            if slot_info["waited_ms"] >= 200:
+                print(
+                    f"  [i] LLM queue waited {slot_info['waited_ms']} ms "
+                    f"(limit={slot_info['limit']}, inflight_at_start={slot_info['inflight']})."
+                )
             prompt_tokens = response.usage.prompt_tokens if response.usage else 0
             completion_tokens = response.usage.completion_tokens if response.usage else 0
             content = response.choices[0].message.content.strip()
@@ -592,14 +681,21 @@ def get_text_from_llm(text, config, client):
     llm_start_time = time.time()
     try:
         resolved_model = resolve_model_for_request(config.get('llm_provider', ''), config.get('llm_model', ''), config)
-        response = _chat_completion_with_token_fallback(
-            client=client,
-            model=resolved_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=config['llm_temperature'],
-            token_budget=max_tokens,
-        )
-        llm_time = time.time() - llm_start_time
+        with _LLM_REQUEST_LIMITER.acquire(_resolve_llm_max_concurrent_requests(config)) as slot_info:
+            llm_start_time = time.time()
+            response = _chat_completion_with_token_fallback(
+                client=client,
+                model=resolved_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=config['llm_temperature'],
+                token_budget=max_tokens,
+            )
+            llm_time = time.time() - llm_start_time
+        if slot_info["waited_ms"] >= 200:
+            print(
+                f"  [i] LLM queue waited {slot_info['waited_ms']} ms "
+                f"(limit={slot_info['limit']}, inflight_at_start={slot_info['inflight']})."
+            )
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
         content = response.choices[0].message.content.strip()

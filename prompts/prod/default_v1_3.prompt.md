@@ -25,8 +25,8 @@ List-item punctuation rules (CRITICAL):
 • Missing terminal periods in such list items are grammar errors and MUST be corrected.
 • NEVER replace a missing or existing terminal period with a comma.
 • Do NOT add commas as sentence-ending punctuation under any circumstances.
-• Questions must keep `?` as final punctuation (never `?.`).
-• Exclamations must keep `!` as final punctuation (never `!.`).
+• Questions must keep `?` as final punctuation (never `?.` or `.?`).
+• Exclamations must keep `!` as final punctuation (never `!.` or `.!`).
 
 Strict Constraints:
 • DO NOT rewrite, rephrase, expand, or change meaning.
@@ -35,6 +35,7 @@ Strict Constraints:
 • PRESERVE terminal punctuation unless the sentence is grammatically incorrect without it.
 • PRESERVE abbreviations, proper nouns, and technical terms (e.g., "/opt", "/usr/bin", "API key", "localhost").
 • NO anthropomorphic language.
+
 
 Output ONLY a JSON list of objects.
 Each object MUST contain:

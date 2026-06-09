@@ -65,6 +65,8 @@ class EnqueueJobRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     llmMaxPasses: int | None = None
+    llmMaxConcurrentRequests: int | None = None
+    llmMaxParallelFiles: int | None = None
     notifyTerminalPunctuation: bool | None = None
     urls: str | None = None
     selectedFiles: list[str] | None = None
@@ -76,6 +78,8 @@ class SavePreferencesRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     llmMaxPasses: int | None = None
+    llmMaxConcurrentRequests: int | None = None
+    llmMaxParallelFiles: int | None = None
     notifyTerminalPunctuation: bool | None = None
 
 
@@ -88,12 +92,32 @@ def _normalize_llm_max_passes(value: int | None) -> str | None:
     return str(parsed)
 
 
+def _normalize_llm_max_concurrent_requests(value: int | None) -> str | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < 1 or parsed > 20:
+        raise ValueError("llmMaxConcurrentRequests must be between 1 and 20")
+    return str(parsed)
+
+
+def _normalize_llm_max_parallel_files(value: int | None) -> str | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < 1 or parsed > 8:
+        raise ValueError("llmMaxParallelFiles must be between 1 and 8")
+    return str(parsed)
+
+
 def _build_config_updates(
     prompt_key: str | None,
     output_types: list[str] | None,
     provider: str | None,
     model: str | None,
     llm_max_passes: int | None,
+    llm_max_concurrent_requests: int | None,
+    llm_max_parallel_files: int | None,
     notify_terminal_punctuation: bool | None,
 ) -> dict[str, str]:
     updates: dict[str, str] = {}
@@ -117,6 +141,14 @@ def _build_config_updates(
     max_passes_value = _normalize_llm_max_passes(llm_max_passes)
     if max_passes_value is not None:
         updates["llm_max_passes"] = max_passes_value
+
+    max_concurrent_requests_value = _normalize_llm_max_concurrent_requests(llm_max_concurrent_requests)
+    if max_concurrent_requests_value is not None:
+        updates["llm_max_concurrent_requests"] = max_concurrent_requests_value
+
+    max_parallel_files_value = _normalize_llm_max_parallel_files(llm_max_parallel_files)
+    if max_parallel_files_value is not None:
+        updates["llm_max_parallel_files"] = max_parallel_files_value
 
     if notify_terminal_punctuation is not None:
         updates["notify_terminal_punctuation"] = "true" if notify_terminal_punctuation else "false"
@@ -258,6 +290,8 @@ def get_capabilities() -> dict:
             "activePrompt": config.get("active_prompt"),
             "outputTypes": config.get("output_types"),
             "llmMaxPasses": config.get("llm_max_passes"),
+            "llmMaxConcurrentRequests": config.get("llm_max_concurrent_requests"),
+            "llmMaxParallelFiles": config.get("llm_max_parallel_files"),
             "notifyTerminalPunctuation": bool(config.get("notify_terminal_punctuation", True)),
         },
         "prompts": [
@@ -508,6 +542,8 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
         "outputTypes": selected_output_types,
         "provider": payload.provider,
         "model": payload.model,
+        "llmMaxConcurrentRequests": payload.llmMaxConcurrentRequests,
+        "llmMaxParallelFiles": payload.llmMaxParallelFiles,
         "notifyTerminalPunctuation": payload.notifyTerminalPunctuation,
         "urls": payload.urls or "",
         "selectedFiles": sorted(set(selected_files)),
@@ -520,6 +556,8 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
             provider=payload.provider,
             model=payload.model,
             llm_max_passes=payload.llmMaxPasses,
+            llm_max_concurrent_requests=payload.llmMaxConcurrentRequests,
+            llm_max_parallel_files=payload.llmMaxParallelFiles,
             notify_terminal_punctuation=payload.notifyTerminalPunctuation,
         )
     except ValueError as exc:
@@ -539,6 +577,8 @@ def save_preferences(payload: SavePreferencesRequest) -> dict:
             provider=payload.provider,
             model=payload.model,
             llm_max_passes=payload.llmMaxPasses,
+            llm_max_concurrent_requests=payload.llmMaxConcurrentRequests,
+            llm_max_parallel_files=payload.llmMaxParallelFiles,
             notify_terminal_punctuation=payload.notifyTerminalPunctuation,
         )
     except ValueError as exc:
