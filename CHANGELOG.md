@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-06-09]
+
+### Added
+
+- `config.yaml` runtime source with per-run queue-time reload for advanced limits (`max_passes`, `max_concurrent_requests`, `max_parallel_files`).
+- `setup_foundry_env.py --scan-models` option and interactive menu action to scan local + Foundry model catalogs and save into `config.yaml`.
+
+### Changed
+
+- Web wizard advanced controls moved out of UI; runtime/provider-model behavior is now sourced from `config.yaml`.
+- Job enqueue now reads `config.yaml` each time **Add Job To Queue** is pressed and snapshots runtime/provider-model overrides for that job.
+- Active provider/model selection is now explicit from YAML (`llm.active_provider` + `llm.active_model_id`) instead of inferred fallback selection.
+- Capabilities/model APIs now return persisted YAML catalog data instead of probing local providers on every restart/request.
+- Model catalog scan/save is setup-script-only (`setup_foundry_env.py`) and not exposed in the web frontend.
+- Documentation updated across readme, configuration, webapp, wizard, and API contract to match YAML-driven runtime behavior.
+- Changelog now explicitly documents multithread functionality: global concurrent LLM request limiting, parallel file workers, and queue telemetry.
+
+- Rewrote `readme.md` introduction to clearly state the product purpose, target workflow, and primary capabilities.
+- Added production shipping guidance in `readme.md` for excluding local runtime artifacts from release bundles.
+- Added a release data-hygiene checklist in `SECURITY.md` focused on private operational data exposure prevention.
+
+### Fixed
+
+- Removed unused imports in `toolkit/consistency_full_tool.py` and `toolkit/debug_analyzer.py` as part of dead-code cleanup.
+
 ## [2026-06-08]
 
 ### Added

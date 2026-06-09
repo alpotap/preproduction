@@ -15,3 +15,11 @@ Include:
 ## Supported versions
 
 Security fixes are applied to the default branch first.
+
+## Release data-hygiene checklist
+
+Before packaging or deploying, verify the release artifact excludes local operational data:
+
+- Exclude `input/` and `output/` directories from deployment bundles.
+- Exclude debug and run-history artifacts (for example `output/debug_bundles/`, `output/web_job_history.json`, `output/llm_raw_output.log`).
+- Verify environment variables and host-level secrets are used for credentials; do not hardcode API keys or endpoints in source files.

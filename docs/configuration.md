@@ -48,9 +48,6 @@ Current keys:
 - LM Studio Model Name
 - LLM Temperature
 - LLM Max Tokens
-- LLM Max Passes
-- LLM Max Concurrent Requests
-- LLM Max Parallel Files
 - Notify Terminal Punctuation
 - Output Types
 - AI Only Corrections
@@ -63,9 +60,11 @@ Notes:
 - `AI Only Corrections` defaults to `true` and keeps correction output strictly model-provided (no local augmentation of extra corrections).
 - Set `AI Only Corrections: false` only when you explicitly want legacy local post-processing/augmentation behavior.
 - Objective guardrails still apply in both modes: invalid terminal appends like `?.`, `!.`, and `:.` are dropped.
-- `LLM Max Passes` defaults to `1` and caps total correction attempts per chunk (allowed range `1` to `5`).
-- `LLM Max Concurrent Requests` defaults to `3` and caps simultaneous outbound LLM calls across the running process (allowed range `1` to `20`).
-- `LLM Max Parallel Files` defaults to `1` and controls how many files can run in parallel within a single job (allowed range `1` to `8`).
+- Advanced runtime controls are now loaded from `config.yaml` at repository root:
+    - `runtime.llm.max_passes` (`1` to `5`)
+    - `runtime.llm.max_concurrent_requests` (`1` to `20`)
+    - `runtime.files.max_parallel_files` (`1` to `8`)
+- The web backend re-reads `config.yaml` whenever a user clicks **Add Job To Queue**, so runtime changes apply between queued runs without restarting the server.
 - `Retry On Empty Corrections` defaults to `true`. When enabled, the low-temperature empty-result retry is counted inside `LLM Max Passes` (it is not an unlimited extra pass).
 - `Notify Terminal Punctuation` controls whether terminal-punctuation explanations are inserted as comments.
 - Terminal punctuation suppression strings are loaded from `terminal_punctuation_suppress_strings.txt` in the repository root. Use one string per line; lines starting with `#` are treated as comments.
@@ -85,6 +84,25 @@ Notes:
 - Markdown files are the source of truth for prompt edits.
 - Staging markdown filenames are normalized to include the version suffix automatically.
 - Prompt names exposed to CLI/web selection include version in the display name.
+
+## Model catalog refresh and persistence
+
+Provider/model catalogs are stored in `config.yaml` under `llm.providers.*.models`.
+Active model routing for queued web jobs is explicit in:
+
+- `llm.active_provider`
+- `llm.active_model_id`
+
+The backend reads these values at enqueue time for every **Add Job To Queue** action.
+
+- The app does not need to probe local providers on every restart.
+- Refresh on demand with:
+
+```shell
+py setup_foundry_env.py --scan-models
+```
+
+- The same refresh action is available in web UI as **Scan and Save Models**.
 
 ## Windows service configuration
 

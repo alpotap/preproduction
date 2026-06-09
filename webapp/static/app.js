@@ -27,11 +27,6 @@ const elements = {
   urlsInput: document.getElementById('urlsInput'),
   promptCategorySelect: document.getElementById('promptCategorySelect'),
   promptSelect: document.getElementById('promptSelect'),
-  providerSelect: document.getElementById('providerSelect'),
-  modelSelect: document.getElementById('modelSelect'),
-  llmMaxPassesInput: document.getElementById('llmMaxPassesInput'),
-  llmMaxConcurrentRequestsInput: document.getElementById('llmMaxConcurrentRequestsInput'),
-  llmMaxParallelFilesInput: document.getElementById('llmMaxParallelFilesInput'),
   notifyTerminalPunctuationOn: document.getElementById('notifyTerminalPunctuationOn'),
   notifyTerminalPunctuationOff: document.getElementById('notifyTerminalPunctuationOff'),
   outputTypeList: document.getElementById('outputTypeList'),
@@ -142,51 +137,6 @@ function setMessage(target, message, isError = false) {
   target.style.color = isError ? '#b52121' : '';
 }
 
-function parseLlmMaxPassesValue(rawValue) {
-  const value = String(rawValue ?? '').trim();
-  if (!value) {
-    return null;
-  }
-  if (!/^\d+$/.test(value)) {
-    throw new Error('Max LLM Passes must be a whole number between 1 and 5.');
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 5) {
-    throw new Error('Max LLM Passes must be between 1 and 5.');
-  }
-  return parsed;
-}
-
-function parseLlmMaxConcurrentRequestsValue(rawValue) {
-  const value = String(rawValue ?? '').trim();
-  if (!value) {
-    return null;
-  }
-  if (!/^\d+$/.test(value)) {
-    throw new Error('Max Concurrent LLM Requests must be a whole number between 1 and 20.');
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 20) {
-    throw new Error('Max Concurrent LLM Requests must be between 1 and 20.');
-  }
-  return parsed;
-}
-
-function parseLlmMaxParallelFilesValue(rawValue) {
-  const value = String(rawValue ?? '').trim();
-  if (!value) {
-    return null;
-  }
-  if (!/^\d+$/.test(value)) {
-    throw new Error('Max Parallel Files must be a whole number between 1 and 8.');
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 8) {
-    throw new Error('Max Parallel Files must be between 1 and 8.');
-  }
-  return parsed;
-}
-
 function notifyTerminalPunctuationEnabled() {
   return Boolean(elements.notifyTerminalPunctuationOn?.checked);
 }
@@ -215,7 +165,6 @@ function renderCapabilities() {
   const {
     prompts = [],
     promptCategories = [],
-    providers = [],
     outputTypes = [],
     config = {},
   } = state.capabilities || {};
@@ -250,32 +199,6 @@ function renderCapabilities() {
   // Populate prompt dropdown filtered to selected category
   filterPromptsByCategory(initialCategory, defaultPromptKey);
 
-  elements.providerSelect.innerHTML = providers
-    .map(provider => `<option value="${provider.key}">${provider.label}</option>`)
-    .join('');
-
-  if (!providers.length) {
-    elements.providerSelect.innerHTML = '<option value="">No configured providers</option>';
-    elements.providerSelect.value = '';
-  } else {
-    elements.providerSelect.value = config.llmProvider;
-    if (!elements.providerSelect.value) {
-      elements.providerSelect.value = providers[0].key;
-    }
-  }
-
-  const configuredPasses = Number(config.llmMaxPasses || 1);
-  elements.llmMaxPassesInput.value = Number.isFinite(configuredPasses)
-    ? String(configuredPasses)
-    : '1';
-  const configuredMaxConcurrent = Number(config.llmMaxConcurrentRequests || 3);
-  elements.llmMaxConcurrentRequestsInput.value = Number.isFinite(configuredMaxConcurrent)
-    ? String(configuredMaxConcurrent)
-    : '3';
-  const configuredMaxParallelFiles = Number(config.llmMaxParallelFiles || 1);
-  elements.llmMaxParallelFilesInput.value = Number.isFinite(configuredMaxParallelFiles)
-    ? String(configuredMaxParallelFiles)
-    : '1';
   setNotifyTerminalPunctuation(config.notifyTerminalPunctuation !== false);
 
   // Load output types from sessionStorage or default to ["Hybrid"]
@@ -321,42 +244,6 @@ function filterPromptsByCategory(categoryKey, preferredPromptKey = null) {
   updatePromptTooltip();
 }
 
-async function loadModels(preferredModel = null) {
-  const provider = elements.providerSelect.value;
-  if (!provider) {
-    elements.modelSelect.innerHTML = '<option value="">No model available</option>';
-    return;
-  }
-  const fallbackModel = preferredModel
-    || elements.modelSelect.value
-    || state.capabilities?.config?.llmModel
-    || '';
-  const data = await fetchJson(`/api/models?provider=${encodeURIComponent(provider)}`);
-  const rawModels = data.models || [];
-  const models = rawModels
-    .map(model => {
-      if (typeof model === 'string') {
-        return { value: model, label: model };
-      }
-      if (model && typeof model === 'object') {
-        const value = String(model.value || '').trim();
-        if (!value) return null;
-        const label = String(model.label || value);
-        return { value, label };
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  elements.modelSelect.innerHTML = models.length
-    ? models.map(model => `<option value="${model.value}">${model.label}</option>`).join('')
-    : '<option value="">Use current default</option>';
-
-  if (fallbackModel && models.some(model => model.value === fallbackModel)) {
-    elements.modelSelect.value = fallbackModel;
-  }
-}
-
 async function persistPreferences(overrides = {}) {
   // Save prompt and output types to sessionStorage (session-only)
   const promptKey = elements.promptSelect.value || null;
@@ -364,17 +251,9 @@ async function persistPreferences(overrides = {}) {
   sessionStorage.setItem('sessionPromptKey', JSON.stringify(promptKey));
   sessionStorage.setItem('sessionOutputTypes', JSON.stringify(outputTypes));
 
-  const llmMaxPasses = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
-  const llmMaxConcurrentRequests = parseLlmMaxConcurrentRequestsValue(elements.llmMaxConcurrentRequestsInput.value);
-  const llmMaxParallelFiles = parseLlmMaxParallelFilesValue(elements.llmMaxParallelFilesInput.value);
-
-  // Still persist provider and model to server for broader configuration
   const payload = {
-    provider: elements.providerSelect.value || null,
-    model: elements.modelSelect.value || null,
-    llmMaxPasses,
-    llmMaxConcurrentRequests,
-    llmMaxParallelFiles,
+    promptKey,
+    outputTypes,
     notifyTerminalPunctuation: notifyTerminalPunctuationEnabled(),
     ...overrides,
   };
@@ -386,17 +265,6 @@ async function persistPreferences(overrides = {}) {
   });
 
   if (state.capabilities?.config) {
-    state.capabilities.config.llmProvider = payload.provider || state.capabilities.config.llmProvider;
-    state.capabilities.config.llmModel = payload.model || state.capabilities.config.llmModel;
-    if (payload.llmMaxPasses !== null && payload.llmMaxPasses !== undefined) {
-      state.capabilities.config.llmMaxPasses = payload.llmMaxPasses;
-    }
-    if (payload.llmMaxConcurrentRequests !== null && payload.llmMaxConcurrentRequests !== undefined) {
-      state.capabilities.config.llmMaxConcurrentRequests = payload.llmMaxConcurrentRequests;
-    }
-    if (payload.llmMaxParallelFiles !== null && payload.llmMaxParallelFiles !== undefined) {
-      state.capabilities.config.llmMaxParallelFiles = payload.llmMaxParallelFiles;
-    }
     if (payload.notifyTerminalPunctuation !== null && payload.notifyTerminalPunctuation !== undefined) {
       state.capabilities.config.notifyTerminalPunctuation = payload.notifyTerminalPunctuation;
       setNotifyTerminalPunctuation(payload.notifyTerminalPunctuation);
@@ -580,28 +448,11 @@ function selectAllInputFiles(checked) {
 }
 
 async function enqueueJob() {
-  let llmMaxPasses = null;
-  let llmMaxConcurrentRequests = null;
-  let llmMaxParallelFiles = null;
-  try {
-    llmMaxPasses = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
-    llmMaxConcurrentRequests = parseLlmMaxConcurrentRequestsValue(elements.llmMaxConcurrentRequestsInput.value);
-    llmMaxParallelFiles = parseLlmMaxParallelFilesValue(elements.llmMaxParallelFilesInput.value);
-  } catch (error) {
-    setMessage(elements.jobMessage, error.message, true);
-    return;
-  }
-
   const payload = {
     taskType: elements.taskType.value,
     folder: elements.folderSelect.value,
     promptKey: elements.promptSelect.value,
     outputTypes: selectedOutputTypes(),
-    provider: elements.providerSelect.value,
-    model: elements.modelSelect.value || null,
-    llmMaxPasses,
-    llmMaxConcurrentRequests,
-    llmMaxParallelFiles,
     notifyTerminalPunctuation: notifyTerminalPunctuationEnabled(),
     urls: elements.urlsInput.value,
     selectedFiles: selectedInputFiles(),
@@ -609,10 +460,6 @@ async function enqueueJob() {
 
   if (!payload.folder) {
     setMessage(elements.jobMessage, 'Select an input folder.', true);
-    return;
-  }
-  if (!payload.provider) {
-    setMessage(elements.jobMessage, 'No configured LLM provider is available on this server.', true);
     return;
   }
   if (payload.taskType === 'download_process' && !payload.urls.trim()) {
@@ -885,35 +732,6 @@ function bindEvents() {
   elements.selectAllFilesButton.addEventListener('click', () => selectAllInputFiles(true));
   elements.clearFilesButton.addEventListener('click', () => selectAllInputFiles(false));
   elements.enqueueJobButton.addEventListener('click', enqueueJob);
-  elements.providerSelect.addEventListener('change', async () => {
-    try {
-      await loadModels();
-      await persistPreferences();
-    } catch (error) {
-      setMessage(elements.jobMessage, `Provider/model refresh failed: ${error.message}`, true);
-    }
-  });
-  elements.modelSelect.addEventListener('change', async () => {
-    try {
-      await persistPreferences();
-    } catch (error) {
-      setMessage(elements.jobMessage, `Could not save model preference: ${error.message}`, true);
-    }
-  });
-  elements.llmMaxPassesInput.addEventListener('change', async () => {
-    try {
-      const parsed = parseLlmMaxPassesValue(elements.llmMaxPassesInput.value);
-      if (parsed === null) {
-        elements.llmMaxPassesInput.value = String(state.capabilities?.config?.llmMaxPasses || 1);
-        setMessage(elements.jobMessage, 'Max LLM Passes cannot be empty.', true);
-        return;
-      }
-      elements.llmMaxPassesInput.value = String(parsed);
-      await persistPreferences({ llmMaxPasses: parsed });
-    } catch (error) {
-      setMessage(elements.jobMessage, `Could not save max passes: ${error.message}`, true);
-    }
-  });
   [elements.notifyTerminalPunctuationOn, elements.notifyTerminalPunctuationOff]
     .filter(Boolean)
     .forEach(input => {
@@ -987,9 +805,8 @@ async function bootstrap() {
   const capabilitiesTask = (async () => {
     try {
       await loadCapabilities();
-      await loadModels(state.capabilities?.config?.llmModel || null);
     } catch (error) {
-      setMessage(elements.jobMessage, `LLM controls unavailable: ${error.message}`, true);
+      setMessage(elements.jobMessage, `Capability load failed: ${error.message}`, true);
     }
   })();
 

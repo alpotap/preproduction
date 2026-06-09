@@ -91,10 +91,8 @@ Step-by-step job submission:
 3. Paste URLs to download (for download tasks).
 	- URL controls are shown only when task type is **Download and process**.
 	- In **Download and process**, the job processes newly downloaded files from the provided URLs and ignores pre-existing files in the folder.
-4. Choose prompt, provider, model, and output types.
-	- In Advanced Options, set **Max LLM Passes** (`1` to `5`) to control total retry attempts per chunk.
-	- In Advanced Options, set **Max Concurrent LLM Requests** (`1` to `20`) to cap simultaneous model calls across the running web process.
-	- In Advanced Options, set **Max Parallel Files** (`1` to `8`) to process multiple files concurrently within one queued job.
+4. Choose prompt and output types.
+	- Advanced runtime controls are read from `config.yaml` at queue time.
 	- Prompt Category and Prompt selectors are shown side-by-side on desktop.
 	- Output Types are displayed in a horizontal row with responsive wrapping when space is limited.
 5. Click **Add Job To Queue**.
@@ -113,7 +111,8 @@ Prompt notes:
 - Staging markdown filenames are normalized with version suffixes (example: `default_v1_1.prompt.md`) for easier editing.
 - Prompt labels in dropdowns include version in the prompt name.
 
-Provider/model/prompt/output-type/max-pass/max-concurrent-request/max-parallel-files selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
+Prompt/output-type selections are persisted server-side as shared defaults, so new browser sessions and other users see the same defaults.
+Provider/model catalog and advanced runtime controls are sourced from `config.yaml`.
 Terminal punctuation suppression strings are file-driven from `terminal_punctuation_suppress_strings.txt` in the repository root and are not configured in the web UI.
 Provider choices in the wizard are filtered to configured and reachable providers only. Local providers are checked with a short timeout so unavailable hosts do not appear.
 Azure AI Foundry provider entries are also grouped by configured vendor category, and only vendor categories with at least one configured model are shown.
@@ -183,9 +182,9 @@ Selected provider/model/prompt/output-type defaults are persisted and shared acr
 Recommended setup order:
 
 1. Run `python setup_foundry_env.py` (or configure provider environment variables in [configuration.md](configuration.md)).
-2. Restart the web server.
-3. Open Wizard → Advanced Options and confirm model entries appear.
-4. If using multiple Foundry profiles or vendors, select the desired vendor/provider category and profile-qualified model entry before queueing a job.
+2. Run `python setup_foundry_env.py --scan-models` to refresh model catalog.
+3. Restart the web server only if provider credentials changed; model catalog refresh does not require restart.
+4. Queue jobs from Wizard. Runtime limits are read from `config.yaml` each time **Add Job To Queue** is pressed.
 
 Notes:
 - `python setup_foundry_env.py` writes both USER and MACHINE scope variables by default for multi-user consistency.
@@ -194,7 +193,7 @@ Notes:
 
 ## Web UI troubleshooting
 
-- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Re-run `python setup_foundry_env.py` from an elevated session to synchronize USER and MACHINE profiles, then restart the app/service.
+- **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Run `python setup_foundry_env.py --scan-models` to refresh `config.yaml` catalog.
 - **Azure AI Foundry model calls fail for gpt-4o-mini** — Set `AZURE_AI_FOUNDRY_ENDPOINT` to `https://<resource>.cognitiveservices.azure.com/` and set `AZURE_AI_FOUNDRY_API_VERSION` to a compatible preview (for example `2025-01-01-preview`).
 - **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.

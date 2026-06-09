@@ -488,6 +488,7 @@ class JobQueueManager:
         model = options.get("model")
         llm_max_concurrent_requests = options.get("llmMaxConcurrentRequests")
         llm_max_parallel_files = options.get("llmMaxParallelFiles")
+        llm_max_passes = options.get("llmMaxPasses")
         notify_terminal_punctuation = options.get("notifyTerminalPunctuation")
 
         if prompt_key:
@@ -508,6 +509,11 @@ class JobQueueManager:
         if llm_max_parallel_files is not None:
             try:
                 config["llm_max_parallel_files"] = max(1, min(8, int(llm_max_parallel_files)))
+            except (TypeError, ValueError):
+                pass
+        if llm_max_passes is not None:
+            try:
+                config["llm_max_passes"] = max(1, min(5, int(llm_max_passes)))
             except (TypeError, ValueError):
                 pass
         if notify_terminal_punctuation is not None:

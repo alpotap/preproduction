@@ -25,6 +25,8 @@ Returns prompts, output types, providers, and effective defaults.
 Response fields:
 - config.llmProvider
 - config.llmModel
+- config.configYamlPath
+- config.configYamlVersion
 - config.llmMaxPasses
 - config.llmMaxConcurrentRequests
 - config.llmMaxParallelFiles
@@ -37,6 +39,7 @@ Response fields:
 - providers[] with key, label (only providers with configured/available model options)
 
 Notes:
+- `config.llmProvider` and `config.llmModel` are sourced explicitly from `config.yaml` (`llm.active_provider`, `llm.active_model_id`).
 - Azure AI Foundry can expose multiple provider keys when vendor categories are configured, for example `azure_ai_foundry` and `foundry_vendor_openai`.
 - Prompt list behavior: only the latest production version in each lineage is returned for user selection, while all staging prompts are returned under the `staging` category.
 - Prompt catalogs are edited in `*.prompt.md`, and matching `*.json` artifacts are generated automatically on startup/reload.
@@ -49,12 +52,10 @@ Notes:
 
 ### GET /api/models?provider=<provider_key>
 
-Returns model options for a provider.
+Returns model options for a provider from persisted `config.yaml` catalog.
 
 Response fields:
-- models[] where each item is one of:
-  - string model ID (Ollama/LM Studio)
-  - object `{ value, label, model_name, profile, display_name, vendor, provider_key }` (Azure AI Foundry)
+- models[] as objects with `value`, `label`, `role`, `enabled`
 
 ### POST /api/preferences
 
@@ -63,11 +64,6 @@ Persists shared default selections used by both CLI and web sessions.
 Request body:
 - promptKey: string | null
 - outputTypes: string[] | null
-- provider: string | null
-- model: string | null
-- llmMaxPasses: number | null (1-5)
-- llmMaxConcurrentRequests: number | null (1-20)
-- llmMaxParallelFiles: number | null (1-8)
 - notifyTerminalPunctuation: boolean | null
 
 Response fields:
@@ -76,6 +72,7 @@ Response fields:
 
 Notes:
 - Values are persisted to the runtime configuration in `readme.md`.
+- Advanced runtime controls are not persisted here; they are loaded from `config.yaml`.
 - Azure AI Foundry endpoint/auth settings remain environment-driven; selected model defaults are persisted.
 - Terminal punctuation suppression strings are not accepted by this endpoint; they are loaded from `terminal_punctuation_suppress_strings.txt` on the server.
 
@@ -175,11 +172,6 @@ Request body:
 - folder: string
 - promptKey: string | null
 - outputTypes: string[] | null
-- provider: string | null
-- model: string | null
-- llmMaxPasses: number | null (1-5)
-- llmMaxConcurrentRequests: number | null (1-20)
-- llmMaxParallelFiles: number | null (1-8)
 - notifyTerminalPunctuation: boolean | null
 - urls: string | null
 - selectedFiles: string[] | null
@@ -189,7 +181,7 @@ Response fields:
 
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
-- Job submission also persists selected provider/model/prompt/output types/max-pass budget/max-concurrent-request cap/max-parallel-files setting as shared defaults for future CLI/web sessions.
+- Job submission persists prompt/output/notification defaults, and reads advanced runtime/provider-model settings from `config.yaml` at enqueue time.
 - For download_process jobs, processing is limited to newly added files for that run (for Wizard usage: files created by URL downloads); pre-existing processable files in the folder are excluded unless explicitly selected via API.
 - Terminal punctuation suppression strings are file-driven from `terminal_punctuation_suppress_strings.txt` and are not set per-job via API.
 

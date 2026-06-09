@@ -1,7 +1,6 @@
 """Coordinates metadata extraction and AI consistency analysis into one workflow."""
 
 import argparse
-import json
 from pathlib import Path
 
 from toolkit.consistency_analysis_tool import run_consistency_analysis, write_analysis_docx

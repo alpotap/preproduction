@@ -1,13 +1,27 @@
 # Document Correction Toolkit
 
-This repository is a Windows-first document processing tool that:
+This repository is a Windows-first quality-assurance tool for training and technical course documents.
 
-1. Reads DOCX, MHTML, and PDF files (plus optional URL downloads).
-2. Sends text through an LLM correction workflow.
-3. Produces review-ready outputs (inline, uncommented, track changes, hybrid).
-4. Writes a deterministic summary report from execution stats.
+Use it when you need to process many source files quickly, apply consistent AI-driven corrections, and export reviewer-friendly Word outputs without manually editing each file.
+
+Core capabilities:
+
+1. Ingests DOCX, MHTML, and PDF files, plus optional URL capture to MHTML.
+2. Runs configurable LLM correction and analysis prompts across document text.
+3. Exports multiple review formats per file (inline, uncommented, track changes, hybrid).
+4. Produces run-level metrics and a deterministic summary report for auditability.
 
 If you are new here, start with the 5-minute setup below.
+
+## Production Scope and Safety
+
+This repository contains both application code and local working data.
+
+- Safe to ship: source code and docs tracked by git.
+- Do not ship: local runtime artifacts under `output/` and working source documents under `input/`.
+- Treat `output/llm_raw_output.log`, `output/web_job_history.json`, and `output/debug_bundles/` as potentially sensitive operational data.
+
+The default `.gitignore` already excludes `input/` and `output/`.
 
 ## Start Here (5 Minutes)
 
@@ -29,6 +43,12 @@ For local-only, non-admin scenarios, you can opt into USER-only scope:
 
 ```shell
 py setup_foundry_env.py --scope user
+```
+
+To refresh and persist provider/model catalogs on demand (including local providers) without waiting for app restart checks:
+
+```shell
+py setup_foundry_env.py --scan-models
 ```
 
 3. Choose how you want to run the app.
@@ -80,6 +100,22 @@ output\0123\
 - [local_web.py](local_web.py): local FastAPI server + web UI.
 - [run_web.bat](run_web.bat): convenience launcher for local web server on Windows.
 - [toolkit/](toolkit): shared core logic used by both CLI and web.
+
+## YAML Runtime Configuration
+
+Advanced runtime controls and provider/model catalog are now sourced from `config.yaml` in the repository root.
+
+- The web UI no longer edits advanced runtime knobs directly.
+- On each **Add Job To Queue**, the backend re-reads `config.yaml` and applies runtime values for that queued job.
+- Model catalog can be refreshed on demand via `py setup_foundry_env.py --scan-models`.
+
+Runtime keys in `config.yaml`:
+
+- `llm.active_provider` (explicit provider used by queued web jobs)
+- `llm.active_model_id` (explicit model ID under the active provider)
+- `runtime.llm.max_passes` (`1` to `5`)
+- `runtime.llm.max_concurrent_requests` (`1` to `20`)
+- `runtime.files.max_parallel_files` (`1` to `8`)
 
 ## Providers
 
@@ -148,23 +184,20 @@ The input/output roots come from `paths.json`.
 
 This section is read at runtime. Keep exact `Key: value` formatting.
 
-Provider, model, prompt, and output type defaults are shared across CLI and web for all users because they are persisted in this section.
+Prompt, output type, and notification defaults are shared across CLI and web for all users because they are persisted in this section.
 
 Language: en-US
 Highlight Corrections: true
 Add Comments: true
-Notify Terminal Punctuation: false
-Active Prompt: default_v1_4
+Notify Terminal Punctuation: true
+Active Prompt: generate_course_summary
 LLM Provider: azure_ai_foundry
 LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-LLM Max Passes: 1
-LLM Max Concurrent Requests: 3
-LLM Max Parallel Files: 1
-Output Types: inline, uncommented, track_changes, hybrid
+Output Types: inline, hybrid
 AI Only Corrections: true
 Retry On Empty Corrections: true
 

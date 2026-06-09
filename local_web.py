@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import concurrent.futures
 from datetime import datetime
 import json
 from pathlib import Path
@@ -26,8 +25,14 @@ from toolkit.providers import (
     AZURE_AI_FOUNDRY_PROVIDER,
     fetch_ollama_models,
     fetch_lm_studio_models,
-    get_foundry_provider_catalog,
     get_lm_studio_settings,
+    get_azure_ai_foundry_settings,
+)
+from toolkit.runtime_yaml import (
+    ensure_runtime_yaml_exists,
+    load_runtime_yaml,
+    get_yaml_providers_and_models,
+    apply_runtime_yaml_overrides,
 )
 from toolkit.web_jobs import (
     EXECUTION_LOG_PATH,
@@ -48,6 +53,7 @@ HIDDEN_OUTPUT_FILENAMES = {"summary_report_state.json"}
 
 app = FastAPI(title=APP_TITLE)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+ensure_runtime_yaml_exists()
 
 # Debug collector for remote diagnostics
 debug_collector = DebugCollector(OUTPUT_DIR)
@@ -62,11 +68,6 @@ class EnqueueJobRequest(BaseModel):
     folder: str
     promptKey: str | None = None
     outputTypes: list[str] | None = None
-    provider: str | None = None
-    model: str | None = None
-    llmMaxPasses: int | None = None
-    llmMaxConcurrentRequests: int | None = None
-    llmMaxParallelFiles: int | None = None
     notifyTerminalPunctuation: bool | None = None
     urls: str | None = None
     selectedFiles: list[str] | None = None
@@ -75,49 +76,12 @@ class EnqueueJobRequest(BaseModel):
 class SavePreferencesRequest(BaseModel):
     promptKey: str | None = None
     outputTypes: list[str] | None = None
-    provider: str | None = None
-    model: str | None = None
-    llmMaxPasses: int | None = None
-    llmMaxConcurrentRequests: int | None = None
-    llmMaxParallelFiles: int | None = None
     notifyTerminalPunctuation: bool | None = None
-
-
-def _normalize_llm_max_passes(value: int | None) -> str | None:
-    if value is None:
-        return None
-    parsed = int(value)
-    if parsed < 1 or parsed > 5:
-        raise ValueError("llmMaxPasses must be between 1 and 5")
-    return str(parsed)
-
-
-def _normalize_llm_max_concurrent_requests(value: int | None) -> str | None:
-    if value is None:
-        return None
-    parsed = int(value)
-    if parsed < 1 or parsed > 20:
-        raise ValueError("llmMaxConcurrentRequests must be between 1 and 20")
-    return str(parsed)
-
-
-def _normalize_llm_max_parallel_files(value: int | None) -> str | None:
-    if value is None:
-        return None
-    parsed = int(value)
-    if parsed < 1 or parsed > 8:
-        raise ValueError("llmMaxParallelFiles must be between 1 and 8")
-    return str(parsed)
 
 
 def _build_config_updates(
     prompt_key: str | None,
     output_types: list[str] | None,
-    provider: str | None,
-    model: str | None,
-    llm_max_passes: int | None,
-    llm_max_concurrent_requests: int | None,
-    llm_max_parallel_files: int | None,
     notify_terminal_punctuation: bool | None,
 ) -> dict[str, str]:
     updates: dict[str, str] = {}
@@ -127,28 +91,6 @@ def _build_config_updates(
 
     if prompt_key:
         updates["active_prompt"] = prompt_key
-
-    if provider:
-        updates["llm_provider"] = provider
-
-    model_value = str(model or "").strip()
-    selected_provider = str(provider or "").strip().lower()
-    if model_value:
-        updates["llm_model"] = model_value
-        if selected_provider == LM_STUDIO_PROVIDER:
-            updates["lm_studio_model_name"] = model_value
-
-    max_passes_value = _normalize_llm_max_passes(llm_max_passes)
-    if max_passes_value is not None:
-        updates["llm_max_passes"] = max_passes_value
-
-    max_concurrent_requests_value = _normalize_llm_max_concurrent_requests(llm_max_concurrent_requests)
-    if max_concurrent_requests_value is not None:
-        updates["llm_max_concurrent_requests"] = max_concurrent_requests_value
-
-    max_parallel_files_value = _normalize_llm_max_parallel_files(llm_max_parallel_files)
-    if max_parallel_files_value is not None:
-        updates["llm_max_parallel_files"] = max_parallel_files_value
 
     if notify_terminal_punctuation is not None:
         updates["notify_terminal_punctuation"] = "true" if notify_terminal_punctuation else "false"
@@ -193,73 +135,6 @@ def _build_prompt_details(prompt_definition: dict) -> str:
     return " ".join(details).strip()
 
 
-def _build_available_providers_and_models(config: dict) -> tuple[list[dict[str, str]], dict[str, list]]:
-    provider_models: dict[str, list] = {
-        OLLAMA_PROVIDER: [],
-        LM_STUDIO_PROVIDER: [],
-    }
-
-    local_provider_fetchers = {
-        OLLAMA_PROVIDER: lambda: fetch_ollama_models(),
-        LM_STUDIO_PROVIDER: lambda: fetch_lm_studio_models(config),
-    }
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            provider_key: executor.submit(fetcher)
-            for provider_key, fetcher in local_provider_fetchers.items()
-        }
-        for provider_key, future in futures.items():
-            try:
-                provider_models[provider_key] = future.result(timeout=1.5) or []
-            except Exception:
-                provider_models[provider_key] = []
-
-    foundry_catalog = get_foundry_provider_catalog(config)
-    for provider_key, bucket in foundry_catalog.items():
-        provider_models[provider_key] = bucket.get("models", [])
-
-    provider_labels = {
-        OLLAMA_PROVIDER: "Ollama",
-        LM_STUDIO_PROVIDER: "LM Studio",
-        AZURE_AI_FOUNDRY_PROVIDER: "Azure AI Foundry",
-    }
-    for provider_key, bucket in foundry_catalog.items():
-        provider_labels[provider_key] = bucket.get("label", provider_labels.get(provider_key, provider_key))
-
-    ordered_keys = [OLLAMA_PROVIDER, LM_STUDIO_PROVIDER, AZURE_AI_FOUNDRY_PROVIDER]
-    extra_foundry_keys = sorted([key for key in foundry_catalog.keys() if key != AZURE_AI_FOUNDRY_PROVIDER])
-    ordered_keys.extend(extra_foundry_keys)
-    available_providers = [
-        {"key": key, "label": provider_labels[key]}
-        for key in ordered_keys
-        if provider_models.get(key)
-    ]
-    return available_providers, provider_models
-
-
-def _resolve_effective_model(models: list, current_model: str) -> str:
-    if not models:
-        return ""
-
-    normalized_models: list[str] = []
-    for model in models:
-        if isinstance(model, str):
-            normalized_models.append(model)
-            continue
-        if isinstance(model, dict):
-            value = str(model.get("value", "")).strip()
-            if value:
-                normalized_models.append(value)
-
-    if not normalized_models:
-        return ""
-
-    current = str(current_model or "").strip()
-    if current and current in normalized_models:
-        return current
-    return normalized_models[0]
-
-
 @app.get("/")
 def serve_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -267,31 +142,22 @@ def serve_index() -> FileResponse:
 
 @app.get("/api/capabilities")
 def get_capabilities() -> dict:
-    config = hydrate_runtime_config(load_config())
-    providers, provider_models = _build_available_providers_and_models(config)
+    runtime_yaml = load_runtime_yaml()
+    config = apply_runtime_yaml_overrides(hydrate_runtime_config(load_config()), runtime_yaml)
+    providers, _provider_models = get_yaml_providers_and_models(runtime_yaml)
     selectable_prompts = get_selectable_prompt_definitions()
-
-    configured_provider = str(config.get("llm_provider", "")).strip()
-    available_provider_keys = [item["key"] for item in providers]
-    effective_provider = (
-        configured_provider
-        if configured_provider in available_provider_keys
-        else (available_provider_keys[0] if available_provider_keys else "")
-    )
-    effective_model = _resolve_effective_model(
-        provider_models.get(effective_provider, []),
-        str(config.get("llm_model", "")),
-    )
 
     return {
         "config": {
-            "llmProvider": effective_provider,
-            "llmModel": effective_model,
+            "llmProvider": str(config.get("llm_provider", "")).strip(),
+            "llmModel": str(config.get("llm_model", "")).strip(),
             "activePrompt": config.get("active_prompt"),
             "outputTypes": config.get("output_types"),
             "llmMaxPasses": config.get("llm_max_passes"),
             "llmMaxConcurrentRequests": config.get("llm_max_concurrent_requests"),
             "llmMaxParallelFiles": config.get("llm_max_parallel_files"),
+            "configYamlPath": "config.yaml",
+            "configYamlVersion": runtime_yaml.get("version", 1),
             "notifyTerminalPunctuation": bool(config.get("notify_terminal_punctuation", True)),
         },
         "prompts": [
@@ -326,17 +192,12 @@ def get_capabilities() -> dict:
 
 @app.get("/api/models")
 def get_models(provider: str = Query(...)) -> dict:
-    config = hydrate_runtime_config(load_config())
+    runtime_yaml = load_runtime_yaml()
+    _providers, provider_models = get_yaml_providers_and_models(runtime_yaml)
     provider = provider.strip().lower()
-    foundry_catalog = get_foundry_provider_catalog(config)
-    if provider == OLLAMA_PROVIDER:
-        models = fetch_ollama_models()
-    elif provider == LM_STUDIO_PROVIDER:
-        models = fetch_lm_studio_models(config)
-    elif provider == AZURE_AI_FOUNDRY_PROVIDER or provider in foundry_catalog:
-        models = foundry_catalog.get(provider, {}).get("models", [])
-    else:
+    if provider not in {OLLAMA_PROVIDER, LM_STUDIO_PROVIDER, AZURE_AI_FOUNDRY_PROVIDER}:
         raise HTTPException(status_code=400, detail="Unsupported provider")
+    models = provider_models.get(provider, [])
     return {"models": models}
 
 
@@ -537,31 +398,27 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
             continue
         selected_files.append(file_name)
 
+    runtime_yaml = load_runtime_yaml()
+    yaml_overrides = apply_runtime_yaml_overrides({}, runtime_yaml)
+
     options = {
         "promptKey": payload.promptKey,
         "outputTypes": selected_output_types,
-        "provider": payload.provider,
-        "model": payload.model,
-        "llmMaxConcurrentRequests": payload.llmMaxConcurrentRequests,
-        "llmMaxParallelFiles": payload.llmMaxParallelFiles,
+        "provider": yaml_overrides.get("llm_provider"),
+        "model": yaml_overrides.get("llm_model"),
+        "llmMaxPasses": yaml_overrides.get("llm_max_passes"),
+        "llmMaxConcurrentRequests": yaml_overrides.get("llm_max_concurrent_requests"),
+        "llmMaxParallelFiles": yaml_overrides.get("llm_max_parallel_files"),
         "notifyTerminalPunctuation": payload.notifyTerminalPunctuation,
         "urls": payload.urls or "",
         "selectedFiles": sorted(set(selected_files)),
     }
 
-    try:
-        config_updates = _build_config_updates(
-            prompt_key=payload.promptKey,
-            output_types=selected_output_types,
-            provider=payload.provider,
-            model=payload.model,
-            llm_max_passes=payload.llmMaxPasses,
-            llm_max_concurrent_requests=payload.llmMaxConcurrentRequests,
-            llm_max_parallel_files=payload.llmMaxParallelFiles,
-            notify_terminal_punctuation=payload.notifyTerminalPunctuation,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    config_updates = _build_config_updates(
+        prompt_key=payload.promptKey,
+        output_types=selected_output_types,
+        notify_terminal_punctuation=payload.notifyTerminalPunctuation,
+    )
     save_config(config_updates)
 
     job = job_manager.enqueue(payload.taskType, folder, options)
@@ -570,19 +427,11 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
 
 @app.post("/api/preferences")
 def save_preferences(payload: SavePreferencesRequest) -> dict:
-    try:
-        config_updates = _build_config_updates(
-            prompt_key=payload.promptKey,
-            output_types=payload.outputTypes,
-            provider=payload.provider,
-            model=payload.model,
-            llm_max_passes=payload.llmMaxPasses,
-            llm_max_concurrent_requests=payload.llmMaxConcurrentRequests,
-            llm_max_parallel_files=payload.llmMaxParallelFiles,
-            notify_terminal_punctuation=payload.notifyTerminalPunctuation,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    config_updates = _build_config_updates(
+        prompt_key=payload.promptKey,
+        output_types=payload.outputTypes,
+        notify_terminal_punctuation=payload.notifyTerminalPunctuation,
+    )
     save_config(config_updates)
     return {"status": "ok", "saved": sorted(config_updates.keys())}
 

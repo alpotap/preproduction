@@ -41,14 +41,20 @@ For unattended web hosting on Windows, use the separate service installer descri
    - `output/<folder>/summary_report_state.json` (historical execution stats)
    - `output/<folder>/summary_report.docx` (readable report with run and category totals)
 
-10. **Save preferences** — Provider, model, prompt, output type, max-pass, max-concurrent-request, and max-parallel-files choices are stored for the next session and shared with the web UI for all users on the same host.
+10. **Save preferences** — Prompt/output type and notification choices are stored for the next session and shared with the web UI for all users on the same host.
+
+11. **Advanced runtime controls from YAML** — `config.yaml` now controls runtime limits and provider/model catalog used by queued web jobs:
+   - `runtime.llm.max_passes`
+   - `runtime.llm.max_concurrent_requests`
+   - `runtime.files.max_parallel_files`
+   - `llm.providers.*.models`
 
 ## Hidden Whitespace Handling
 
 The tool automatically detects and normalizes invisible Unicode whitespace characters (non-breaking spaces, zero-width characters, etc.) in source documents before analysis. This prevents false-positive corrections like "Missing space before 'dialog'" when the spacing is visually correct but hidden characters are present. Normalized text is used during LLM analysis, and corrections caused purely by invisible whitespace are dropped automatically.
 Correction sanitation also blocks duplicate terminal punctuation artifacts during list-item punctuation fixes so outputs do not gain trailing `..`.
 
-11. **Foundry profile and vendor selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model list includes profile-qualified display names such as `My Editing Model [primary]` and groups provider options by configured vendor category.
+12. **Foundry profile and vendor selection (when configured)** — If multiple Azure AI Foundry profiles are configured through environment variables, the model catalog can include profile-qualified model IDs and grouped provider entries.
 
 ## Command-line mode
 
@@ -88,7 +94,7 @@ Prompts are loaded from filesystem catalogs under `prompts/prod` and `prompts/st
 
 By default, correction output uses model-provided corrections only (`AI Only Corrections: true` in `readme.md` runtime configuration), which avoids local augmentation rules and helps isolate prompt/model behavior during validation.
 Even in AI-only mode, objective output guardrails remain enabled and remove invalid terminal punctuation appends such as `?.`, `!.`, and `:.`.
-`LLM Max Passes` controls the total retry budget per chunk (default `1`, allowed `1` to `5`).
+`LLM Max Passes` now comes from `config.yaml` (`runtime.llm.max_passes`) and controls the total retry budget per chunk (default `1`, allowed `1` to `5`).
 When `Retry On Empty Corrections: true`, non-trivial inputs that return `[]` can be retried at temperature `0.0` within that same pass budget.
 When `Notify Terminal Punctuation: false`, comment suppression uses strings from `terminal_punctuation_suppress_strings.txt`; matching explanation fragments are removed while punctuation edits still apply.
 

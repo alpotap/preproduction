@@ -1,0 +1,44 @@
+version: 1
+llm:
+  active_provider: azure_ai_foundry
+  active_model_id: primary
+  providers:
+    ollama:
+      refresh_models_on_startup: false
+      models:
+      - id: 40_mini
+        display_name: 4o-mini
+        role: primary
+        enabled: true
+      - id: oss120b
+        display_name: oss120b
+        role: primary
+        enabled: true
+      - id: llama_70b
+        display_name: LLAMA 70b
+        role: secondary
+        enabled: true
+    lm_studio:
+      refresh_models_on_startup: false
+      models: []
+    azure_ai_foundry:
+      refresh_models_on_startup: false
+      models:
+      - id: primary
+        display_name: gpt-4o-mini
+        role: primary
+        enabled: true
+      - id: secondary
+        display_name: oss120b
+        role: secondary
+        enabled: true
+      - id: gpt-5.4-nano
+        display_name: gpt-5.4-nano
+        role: experimental
+        enabled: true
+runtime:
+  llm:
+    max_passes: 1
+    max_concurrent_requests: 20
+  files:
+    max_parallel_files: 2

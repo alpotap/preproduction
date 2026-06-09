@@ -15,6 +15,8 @@ import re
 import sys
 from getpass import getpass
 
+from toolkit.runtime_yaml import scan_and_save_model_catalog
+
 
 DEFAULT_API_VERSION = "2025-01-01-preview"
 PROFILE_IDS_VAR = "AZURE_AI_FOUNDRY_PROFILE_IDS"
@@ -564,7 +566,24 @@ def main() -> int:
         default=ENV_SCOPE_BOTH,
         help="Environment write scope: both (default), user, or machine.",
     )
+    parser.add_argument(
+        "--scan-models",
+        action="store_true",
+        help="Scan providers and save model catalog to config.yaml, then exit.",
+    )
     args = parser.parse_args()
+
+    if args.scan_models:
+        result = scan_and_save_model_catalog()
+        counts = result.get("counts", {})
+        print("Model scan complete. Saved to config.yaml")
+        print(
+            "Counts: "
+            f"ollama={counts.get('ollama', 0)}, "
+            f"lm_studio={counts.get('lm_studio', 0)}, "
+            f"azure_ai_foundry={counts.get('azure_ai_foundry', 0)}"
+        )
+        return 0
 
     if os.name != "nt":
         print("This setup helper is intended for Windows.")
@@ -590,9 +609,10 @@ def main() -> int:
         print("  2. Edit model")
         print("  3. Remove model")
         print("  4. Test model")
-        print("  5. Save and exit")
-        print("  6. Exit without saving")
-        choice = input("Choose action (1-6): ").strip()
+        print("  5. Scan and save models to config.yaml")
+        print("  6. Save and exit")
+        print("  7. Exit without saving")
+        choice = input("Choose action (1-7): ").strip()
 
         if choice == "1":
             add_entry(entries)
@@ -605,9 +625,18 @@ def main() -> int:
             if idx >= 0:
                 test_entry(entries[idx])
         elif choice == "5":
+            result = scan_and_save_model_catalog()
+            counts = result.get("counts", {})
+            print(
+                "Model scan complete. "
+                f"ollama={counts.get('ollama', 0)}, "
+                f"lm_studio={counts.get('lm_studio', 0)}, "
+                f"azure_ai_foundry={counts.get('azure_ai_foundry', 0)}"
+            )
+        elif choice == "6":
             save_entries(entries, args.scope)
             break
-        elif choice == "6":
+        elif choice == "7":
             print("No changes were saved.")
             break
         else:
