@@ -189,15 +189,15 @@ Prompt, output type, and notification defaults are shared across CLI and web for
 Language: en-US
 Highlight Corrections: true
 Add Comments: true
-Notify Terminal Punctuation: true
-Active Prompt: generate_course_summary
+Notify Terminal Punctuation: false
+Active Prompt: paragraph_rewrite
 LLM Provider: azure_ai_foundry
 LLM Model:
 LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: inline, hybrid
+Output Types: inline, uncommented
 AI Only Corrections: true
 Retry On Empty Corrections: true
 

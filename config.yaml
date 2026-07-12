@@ -1,21 +1,25 @@
 version: 1
 llm:
   active_provider: azure_ai_foundry
-  active_model_id: primary
+  active_model_id: gpt_5_4_nano::gpt-5.4-nano
   providers:
     ollama:
       refresh_models_on_startup: false
       models:
-      - id: 40_mini
-        display_name: 4o-mini
+      - id: gemma4:e4b
+        display_name: gemma4:e4b
         role: primary
         enabled: true
-      - id: oss120b
-        display_name: oss120b
-        role: primary
+      - id: gemma4:e2b
+        display_name: gemma4:e2b
+        role: secondary
         enabled: true
-      - id: llama_70b
-        display_name: LLAMA 70b
+      - id: gemma4:31b-cloud
+        display_name: gemma4:31b-cloud
+        role: secondary
+        enabled: true
+      - id: gpt-oss:120b-cloud
+        display_name: gpt-oss:120b-cloud
         role: secondary
         enabled: true
     lm_studio:
@@ -24,17 +28,29 @@ llm:
     azure_ai_foundry:
       refresh_models_on_startup: false
       models:
-      - id: primary
-        display_name: gpt-4o-mini
+      - id: 4o_mini::4o-mini
+        display_name: 4o-mini [4o_mini]
         role: primary
         enabled: true
-      - id: secondary
-        display_name: oss120b
+      - id: oss120b::oss120b
+        display_name: oss120b [oss120b]
         role: secondary
         enabled: true
-      - id: gpt-5.4-nano
-        display_name: gpt-5.4-nano
-        role: experimental
+      - id: primary::gpt-4o-mini
+        display_name: gpt-4o-mini [primary]
+        role: secondary
+        enabled: true
+      - id: secondary::gpt-4.1-mini
+        display_name: oss120b [secondary]
+        role: secondary
+        enabled: true
+      - id: llama_70b::Llama-3.3-70B-Instruct
+        display_name: LLAMA 70b [llama_70b]
+        role: secondary
+        enabled: true
+      - id: gpt_5_4_nano::gpt-5.4-nano
+        display_name: gpt-5.4-nano [gpt_5_4_nano]
+        role: secondary
         enabled: true
 runtime:
   llm:

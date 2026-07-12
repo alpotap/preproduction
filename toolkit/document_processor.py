@@ -112,6 +112,11 @@ def _build_deletion_marker(deleted_text, show_marker=True):
     return f"[-{visible}-]"
 
 
+def _is_ambiguous_single_punctuation(text):
+    """True for one-char punctuation spans that are too ambiguous to relocate safely."""
+    return isinstance(text, str) and len(text) == 1 and text in {",", ".", "-"}
+
+
 def _collect_all_paragraphs(doc):
     """Collect paragraphs from the document body and table cells."""
     all_paragraphs = list(doc.paragraphs)
@@ -185,6 +190,9 @@ def _resolve_correction_start(block_content, original, preferred_start, search_s
         end = preferred_start + len(original)
         if block_content[preferred_start:end] == original:
             return preferred_start
+    if _is_ambiguous_single_punctuation(original):
+        # Avoid re-targeting a different punctuation mark when the hinted index misses.
+        return -1
     return block_content.find(original, search_start)
 
 
@@ -286,6 +294,10 @@ def _filter_corrections_for_block(block_content, corrections):
             continue
 
         occurrence_starts = _find_all_indices(block_content, original)
+        if _is_ambiguous_single_punctuation(original) and len(occurrence_starts) > 1:
+            # Bare punctuation spans are ambiguous in paragraphs with repeated punctuation.
+            # Skip them rather than applying to every occurrence with incorrect meaning.
+            continue
         atomic_edits = _build_atomic_edits(original, corrected)
         if not atomic_edits:
             atomic_edits = [

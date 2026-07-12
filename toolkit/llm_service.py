@@ -15,6 +15,8 @@ from toolkit.utils import normalize_hidden_whitespace, normalize_space
 RAW_OUTPUT_TRACKER_PATH = Path(__file__).resolve().parent.parent / "output" / "llm_raw_output.log"
 _MID_SENTENCE_PERIOD_RE = re.compile(r"\.\s[a-z]")
 _PERIOD_BEFORE_SEPARATOR_RE = re.compile(r"\.\s*[:,]")
+_MISSING_COMMA_HINT_RE = re.compile(r"\b(missing|add|added|needs?|insert|should\s+be)\b[^.\n]*\bcomma\b", re.IGNORECASE)
+_REMOVE_COMMA_HINT_RE = re.compile(r"\b(unnecessary|remove|removed|delete|extra)\b[^.\n]*\bcomma\b", re.IGNORECASE)
 RAW_OUTPUT_TRACKER_MAX_BYTES = 10 * 1024 * 1024
 RAW_OUTPUT_ENTRY_MARKER = "=== LLM DEBUG ENTRY START ===\n"
 DEFAULT_LLM_MAX_CONCURRENT_REQUESTS = 3
@@ -216,6 +218,23 @@ def _introduces_period_before_separator(original: str, corrected: str) -> bool:
     return corr_count > orig_count
 
 
+def _normalize_comma_direction(explanation: str, original: str, corrected: str) -> tuple[str, str]:
+    """Swap original/corrected when explanation intent and comma delta disagree."""
+    if not explanation:
+        return original, corrected
+
+    comma_delta = corrected.count(",") - original.count(",")
+    if comma_delta == 0:
+        return original, corrected
+
+    if comma_delta < 0 and _MISSING_COMMA_HINT_RE.search(explanation):
+        return corrected, original
+    if comma_delta > 0 and _REMOVE_COMMA_HINT_RE.search(explanation):
+        return corrected, original
+
+    return original, corrected
+
+
 def _append_terminal_period_once(value: str) -> str:
     stripped = (value or "").rstrip()
     if not stripped:
@@ -234,6 +253,8 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
             continue
         original = str(entry.get("original") or "")
         corrected = str(entry.get("corrected") or original)
+        explanation = str(entry.get("explanation") or "")
+        original, corrected = _normalize_comma_direction(explanation, original, corrected)
         if not original:
             continue
         if (
@@ -253,7 +274,7 @@ def _sanitize_and_augment_corrections(result: list, text: str) -> tuple[list, in
         
         sanitized.append(
             {
-                "explanation": str(entry.get("explanation") or ""),
+                "explanation": explanation,
                 "original": original,
                 "corrected": corrected,
             }
@@ -306,6 +327,8 @@ def _sanitize_corrections_ai_only(result: list) -> list[dict]:
             continue
         original = str(entry.get("original") or "")
         corrected = str(entry.get("corrected") or original)
+        explanation = str(entry.get("explanation") or "")
+        original, corrected = _normalize_comma_direction(explanation, original, corrected)
         if not original:
             continue
         if _is_terminal_downgrade_to_comma(original, corrected):
@@ -318,7 +341,7 @@ def _sanitize_corrections_ai_only(result: list) -> list[dict]:
             continue
         sanitized.append(
             {
-                "explanation": str(entry.get("explanation") or ""),
+                "explanation": explanation,
                 "original": original,
                 "corrected": corrected,
             }

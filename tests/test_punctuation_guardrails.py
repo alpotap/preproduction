@@ -8,6 +8,36 @@ from toolkit.llm_service import (
 
 
 class PunctuationGuardrailTests(unittest.TestCase):
+    def test_sanitize_swaps_missing_comma_correction_when_direction_is_reversed(self):
+        result = [
+            {
+                "explanation": "Missing comma after introductory phrase.",
+                "original": "By this time, my",
+                "corrected": "By this time my",
+            }
+        ]
+
+        sanitized = _sanitize_corrections_ai_only(result)
+
+        self.assertEqual(1, len(sanitized))
+        self.assertEqual("By this time my", sanitized[0]["original"])
+        self.assertEqual("By this time, my", sanitized[0]["corrected"])
+
+    def test_sanitize_swaps_unnecessary_comma_correction_when_direction_is_reversed(self):
+        result = [
+            {
+                "explanation": "Unnecessary comma before 'she'.",
+                "original": "Another surprise was she",
+                "corrected": "Another surprise was, she",
+            }
+        ]
+
+        sanitized = _sanitize_corrections_ai_only(result)
+
+        self.assertEqual(1, len(sanitized))
+        self.assertEqual("Another surprise was, she", sanitized[0]["original"])
+        self.assertEqual("Another surprise was she", sanitized[0]["corrected"])
+
     def test_augmentation_skips_semantically_duplicate_missing_period_fix(self):
         result = [
             {
@@ -77,6 +107,19 @@ class PunctuationGuardrailTests(unittest.TestCase):
         self.assertEqual(1, len(block_corrections))
         self.assertEqual("s", block_corrections[0]["original"])
         self.assertEqual("s.", block_corrections[0]["corrected"])
+
+    def test_filter_skips_ambiguous_single_comma_correction(self):
+        block_content = "By this time, my wife was ready, and everyone knew."
+        corrections = [
+            {
+                "explanation": "Unnecessary comma.",
+                "original": ",",
+                "corrected": "",
+            }
+        ]
+
+        block_corrections = _filter_corrections_for_block(block_content, corrections)
+        self.assertEqual([], block_corrections)
 
 
     # --- mid-sentence period guard ---
