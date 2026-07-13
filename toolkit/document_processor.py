@@ -1074,15 +1074,17 @@ def _apply_hybrid_corrections_to_paragraph(para, block_content, block_correction
         para.add_run(suffix)
 
 
-def _build_comments_xml(comment_items):
+def _build_comments_xml(comment_items, config=None):
     """Return bytes for word/comments.xml from a list of (comment_id, text) pairs."""
+    commenter_name = str((config or {}).get('docx_commenter_name', 'AI Reviewer') or 'AI Reviewer').strip()
+    commenter_initials = ''.join(part[0].upper() for part in commenter_name.split() if part)[:3] or 'AI'
     root = etree.Element(f'{{{_W_NS}}}comments', nsmap={'w': _W_NS})
     for comment_id, comment_text in comment_items:
         comment = etree.SubElement(root, f'{{{_W_NS}}}comment')
         comment.set(f'{{{_W_NS}}}id', str(comment_id))
-        comment.set(f'{{{_W_NS}}}author', 'AI Reviewer')
+        comment.set(f'{{{_W_NS}}}author', commenter_name)
         comment.set(f'{{{_W_NS}}}date', '2026-01-01T00:00:00Z')
-        comment.set(f'{{{_W_NS}}}initials', 'AI')
+        comment.set(f'{{{_W_NS}}}initials', commenter_initials)
 
         paragraph = etree.SubElement(comment, f'{{{_W_NS}}}p')
         run = etree.SubElement(paragraph, f'{{{_W_NS}}}r')
@@ -1093,12 +1095,12 @@ def _build_comments_xml(comment_items):
     return etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
 
 
-def _inject_comments_into_docx(docx_path, comment_items):
+def _inject_comments_into_docx(docx_path, comment_items, config=None):
     """Post-process a saved docx zip to add word/comments.xml and required relationships."""
     import re as _re
     import zipfile as _zipfile
 
-    comments_xml = _build_comments_xml(comment_items)
+    comments_xml = _build_comments_xml(comment_items, config=config)
 
     with _zipfile.ZipFile(docx_path, 'r') as source_zip:
         file_map = {name: source_zip.read(name) for name in source_zip.namelist()}
@@ -1189,6 +1191,6 @@ def apply_hybrid_correction_plan(input_path, output_path, correction_plan, confi
     doc.save(output_path)
 
     if comment_collector:
-        _inject_comments_into_docx(output_path, comment_collector)
+        _inject_comments_into_docx(output_path, comment_collector, config=config)
 
     print(f"\nSuccessfully saved hybrid DOCX to: {output_path}")

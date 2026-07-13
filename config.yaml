@@ -58,3 +58,5 @@ runtime:
     max_concurrent_requests: 20
   files:
     max_parallel_files: 2
+  docx:
+    commenter_name: Editor

@@ -351,10 +351,10 @@ function selectedInputFiles() {
 }
 
 function updateSelectableFilesVisibility() {
-  const isProcessTask = elements.taskType.value === 'process';
-  elements.fileSelectBlock.hidden = !isProcessTask;
-  if (!isProcessTask) {
-    setMessage(elements.selectableFilesNote, 'File selection is available when Task Type is set to Process Existing Files.');
+  const usesFileSelection = ['process', 'render_cached'].includes(elements.taskType.value);
+  elements.fileSelectBlock.hidden = !usesFileSelection;
+  if (!usesFileSelection) {
+    setMessage(elements.selectableFilesNote, 'File selection is available for Process existing files and Generate outputs from saved AI run.');
   }
 }
 
@@ -381,6 +381,7 @@ async function applyFilesTabDefaultFromWizardFolder() {
 
 async function refreshSelectableFiles() {
   const folder = elements.folderSelect.value;
+  const taskType = elements.taskType.value;
   if (!folder) {
     state.selectableFiles = [];
     elements.selectableFilesList.innerHTML = '';
@@ -389,7 +390,9 @@ async function refreshSelectableFiles() {
   }
 
   try {
-    const data = await fetchJson(`/api/processable-files?folder=${encodeURIComponent(folder)}`);
+    const data = await fetchJson(
+      `/api/processable-files?folder=${encodeURIComponent(folder)}&taskType=${encodeURIComponent(taskType)}`,
+    );
     const rawFiles = Array.isArray(data.files) ? data.files : [];
     state.selectableFiles = rawFiles
       .map(item => {
@@ -404,6 +407,14 @@ async function refreshSelectableFiles() {
         if (item && typeof item === 'object') {
           return {
             name: String(item.name || '').trim(),
+            sourceName: String(item.sourceName || item.name || '').trim(),
+            promptKey: String(item.promptKey || '').trim(),
+            promptName: String(item.promptName || '').trim(),
+            selectionValue: String(item.selectionValue || item.name || '').trim(),
+            cacheReady: Boolean(item.cacheReady),
+            cacheStatus: String(item.cacheStatus || ''),
+            cacheSavedAt: item.cacheSavedAt || null,
+            correctionCount: Number(item.correctionCount || 0),
             sizeBytes: Number(item.sizeBytes || 0),
             modifiedAt: item.modifiedAt || null,
             lastProcessedAt: item.lastProcessedAt || null,
@@ -415,7 +426,77 @@ async function refreshSelectableFiles() {
 
     if (!state.selectableFiles.length) {
       elements.selectableFilesList.innerHTML = '';
-      setMessage(elements.selectableFilesNote, 'No processable files (.docx, .mhtml, .pdf) found in this folder.');
+      const emptyMessage = taskType === 'render_cached'
+        ? 'No cached runs found for this folder yet. Run Process existing files first.'
+        : 'No processable files (.docx, .mhtml, .pdf) found in this folder.';
+      setMessage(elements.selectableFilesNote, emptyMessage);
+      return;
+    }
+
+    if (taskType === 'render_cached') {
+      const renderEntries = state.selectableFiles.filter(entry => entry.cacheReady);
+      if (!renderEntries.length) {
+        elements.selectableFilesList.innerHTML = '';
+        setMessage(elements.selectableFilesNote, 'No cache-ready runs found in this folder for current source files.');
+        return;
+      }
+
+      const grouped = renderEntries.reduce((acc, entry) => {
+        const key = entry.sourceName || entry.name;
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(entry);
+        return acc;
+      }, {});
+
+      const sourceNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+      elements.selectableFilesList.innerHTML = sourceNames
+        .map(sourceName => {
+          const groupEntries = grouped[sourceName];
+          const groupRows = groupEntries
+            .map(entry => {
+              const runLabel = entry.promptName || entry.promptKey || 'Unknown prompt';
+              const lastProcessed = entry.lastProcessedAt ? formatTimestamp(entry.lastProcessedAt) : 'Not processed yet';
+              const correctionCount = Number.isFinite(entry.correctionCount) ? entry.correctionCount : 0;
+              return `
+                <label class="checkbox-item selectable-file-item" title="${escapeHtmlAttribute(sourceName)} — ${escapeHtmlAttribute(runLabel)}">
+                  <input type="checkbox" value="${escapeHtmlAttribute(entry.selectionValue)}" data-source-name="${escapeHtmlAttribute(sourceName)}" checked>
+                  <span class="selectable-file-name">${sourceName} · ${runLabel}</span>
+                  <span class="selectable-file-meta">Last processed: ${lastProcessed} · Corrections: ${formatCount(correctionCount)}</span>
+                </label>
+              `;
+            })
+            .join('');
+
+          return `
+            <div class="selectable-file-group">
+              <div class="selectable-file-group-header">
+                <span class="selectable-file-group-title">${sourceName}</span>
+                <button class="button ghost selectable-file-group-action" type="button" data-action="select-source-runs" data-source-name="${escapeHtmlAttribute(sourceName)}">All runs</button>
+              </div>
+              ${groupRows}
+            </div>
+          `;
+        })
+        .join('');
+
+      elements.selectableFilesList
+        .querySelectorAll('button[data-action="select-source-runs"]')
+        .forEach(button => {
+          button.addEventListener('click', () => {
+            const sourceName = button.dataset.sourceName || '';
+            elements.selectableFilesList
+              .querySelectorAll('input[type="checkbox"][data-source-name]')
+              .forEach(input => {
+                if (input.dataset.sourceName === sourceName && !input.disabled) {
+                  input.checked = true;
+                }
+              });
+          });
+        });
+
+      setMessage(elements.selectableFilesNote, `${renderEntries.length} cached run entries available.`);
       return;
     }
 
@@ -426,7 +507,7 @@ async function refreshSelectableFiles() {
         const lastProcessed = file.lastProcessedAt ? formatTimestamp(file.lastProcessedAt) : 'Not processed yet';
         return `
         <label class="checkbox-item selectable-file-item" title="${escapeHtmlAttribute(name)}">
-          <input type="checkbox" value="${escapeHtmlAttribute(name)}" checked>
+          <input type="checkbox" value="${escapeHtmlAttribute(file.selectionValue || name)}" checked>
           <span class="selectable-file-name">${name}</span>
           <span class="selectable-file-meta">Last processed: ${lastProcessed} · ${size}</span>
         </label>
@@ -466,11 +547,14 @@ async function enqueueJob() {
     setMessage(elements.jobMessage, 'Add at least one URL for Download and process jobs.', true);
     return;
   }
-  if (payload.taskType === 'process' && !payload.selectedFiles.length) {
-    setMessage(elements.jobMessage, 'Select at least one file to process.', true);
+  if (['process', 'render_cached'].includes(payload.taskType) && !payload.selectedFiles.length) {
+    const taskHint = payload.taskType === 'render_cached'
+      ? 'Select at least one source file. If the list is missing after restart, refresh the page once.'
+      : 'Select at least one file.';
+    setMessage(elements.jobMessage, taskHint, true);
     return;
   }
-  if (payload.taskType !== 'process') {
+  if (!['process', 'render_cached'].includes(payload.taskType)) {
     payload.selectedFiles = [];
   }
 
@@ -728,6 +812,9 @@ function bindEvents() {
   elements.taskType.addEventListener('change', () => {
     updateSelectableFilesVisibility();
     updateUploadUrlsVisibility();
+    if (['process', 'render_cached'].includes(elements.taskType.value)) {
+      refreshSelectableFiles().catch(error => setMessage(elements.jobMessage, error.message, true));
+    }
   });
   elements.selectAllFilesButton.addEventListener('click', () => selectAllInputFiles(true));
   elements.clearFilesButton.addEventListener('click', () => selectAllInputFiles(false));
@@ -774,7 +861,7 @@ function bindEvents() {
 
   ['dragenter', 'dragover'].forEach(eventName => {
     elements.fileSelectBlock.addEventListener(eventName, event => {
-      if (elements.taskType.value !== 'process') {
+      if (!['process', 'render_cached'].includes(elements.taskType.value)) {
         return;
       }
       event.preventDefault();
@@ -783,7 +870,7 @@ function bindEvents() {
   });
   ['dragleave', 'drop'].forEach(eventName => {
     elements.fileSelectBlock.addEventListener(eventName, event => {
-      if (elements.taskType.value !== 'process') {
+      if (!['process', 'render_cached'].includes(elements.taskType.value)) {
         return;
       }
       event.preventDefault();
@@ -791,7 +878,7 @@ function bindEvents() {
     });
   });
   elements.fileSelectBlock.addEventListener('drop', event => {
-    if (elements.taskType.value !== 'process') {
+    if (!['process', 'render_cached'].includes(elements.taskType.value)) {
       return;
     }
     uploadFiles(event.dataTransfer.files);

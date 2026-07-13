@@ -7,12 +7,14 @@ from contextlib import contextmanager
 import time
 from datetime import datetime
 from pathlib import Path
+import json
 
 from toolkit.utils import format_path_for_display, get_input_root, log_performance_stats
 from toolkit.document_processor import build_correction_plan, apply_inline_correction_plan, apply_hybrid_correction_plan, build_prepend_plan, apply_prepend_plan, build_course_summary_plan, save_course_summary
 from toolkit.web_tools import download_url_as_mhtml
 from toolkit.output_types import OUTPUT_TYPE_REGISTRY, DEFAULT_OUTPUT_TYPES, normalize_output_types, format_output_types
 from toolkit.summary_report import summarize_correction_plan, update_summary_report
+from toolkit.docx_metadata import scrub_docx_metadata
 from toolkit.providers import (
     OLLAMA_PROVIDER,
     LM_STUDIO_PROVIDER,
@@ -134,6 +136,80 @@ def build_output_stem(file_path):
     return stem
 
 
+def _build_correction_cache_path(output_dir, prompt_key, source_file_path):
+    """Return a deterministic cache path for one source file + prompt."""
+    prompt_segment = str(prompt_key or DEFAULT_PROMPT_KEY).strip() or DEFAULT_PROMPT_KEY
+    return output_dir / ".ai_cache" / prompt_segment / f"{source_file_path.name}.json"
+
+
+def _source_signature(file_path):
+    """Build a minimal source-file signature for cache invalidation."""
+    stat = file_path.stat()
+    return {
+        "sizeBytes": int(stat.st_size),
+        "mtimeNs": int(stat.st_mtime_ns),
+    }
+
+
+def _estimate_plan_text_size(correction_plan):
+    """Estimate total text size represented by a correction plan."""
+    return sum(len(str(block.get("content", ""))) for block in correction_plan if isinstance(block, dict))
+
+
+def _save_correction_plan_cache(output_dir, prompt_key, source_file_path, source_type, correction_plan, summary):
+    """Persist the latest correction plan so outputs can be regenerated without new LLM calls."""
+    cache_path = _build_correction_cache_path(output_dir, prompt_key, source_file_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schemaVersion": 1,
+        "savedAt": datetime.now().isoformat(),
+        "promptKey": str(prompt_key or DEFAULT_PROMPT_KEY),
+        "sourceFileName": source_file_path.name,
+        "sourceType": str(source_type or "docx"),
+        "sourceSignature": _source_signature(source_file_path),
+        "summary": {
+            "correctionCount": int((summary or {}).get("correctionCount", 0)),
+            "categoryCounts": dict((summary or {}).get("categoryCounts", {})),
+            "totalTextSize": int(_estimate_plan_text_size(correction_plan)),
+        },
+        "correctionPlan": correction_plan,
+    }
+    with open(cache_path, "w", encoding="utf-8") as file_handle:
+        json.dump(payload, file_handle, indent=2)
+    return cache_path
+
+
+def _load_correction_plan_cache(output_dir, prompt_key, source_file_path):
+    """Load a cached correction plan only when it matches the current source file signature."""
+    cache_path = _build_correction_cache_path(output_dir, prompt_key, source_file_path)
+    if not cache_path.exists():
+        return None, f"No cached AI result found for prompt '{prompt_key}' and file '{source_file_path.name}'."
+
+    with open(cache_path, "r", encoding="utf-8") as file_handle:
+        payload = json.load(file_handle)
+
+    cached_prompt_key = str(payload.get("promptKey") or "")
+    if cached_prompt_key != str(prompt_key):
+        return None, (
+            f"Cached prompt mismatch for '{source_file_path.name}' "
+            f"(expected '{prompt_key}', found '{cached_prompt_key}')."
+        )
+
+    expected_signature = payload.get("sourceSignature") or {}
+    current_signature = _source_signature(source_file_path)
+    if expected_signature != current_signature:
+        return None, (
+            f"Cached AI result for '{source_file_path.name}' is stale (source file changed). "
+            "Re-run a processing job to refresh cache."
+        )
+
+    correction_plan = payload.get("correctionPlan")
+    if not isinstance(correction_plan, list):
+        return None, f"Cached AI result for '{source_file_path.name}' is invalid (correctionPlan missing)."
+
+    return payload, None
+
+
 def _render_output_type(output_type, processing_file_path, output_path, correction_plan, config):
     """Render one output type for a precomputed correction plan."""
     processing_path = str(processing_file_path)
@@ -141,6 +217,7 @@ def _render_output_type(output_type, processing_file_path, output_path, correcti
 
     if output_type == "inline":
         apply_inline_correction_plan(processing_path, destination_path, correction_plan, config)
+        scrub_docx_metadata(destination_path, str(config.get("docx_commenter_name", "AI Reviewer")))
         return
 
     if output_type == "uncommented":
@@ -148,16 +225,19 @@ def _render_output_type(output_type, processing_file_path, output_path, correcti
         uncommented_config["add_comments"] = False
         uncommented_config["show_deletion_markers"] = False
         apply_inline_correction_plan(processing_path, destination_path, correction_plan, uncommented_config)
+        scrub_docx_metadata(destination_path, str(config.get("docx_commenter_name", "AI Reviewer")))
         return
 
     if output_type == "track_changes":
         if process_docx_tracked_with_plan is None:
             raise RuntimeError("Tracked mode unavailable (missing tracked_processor/pywin32).")
         process_docx_tracked_with_plan(processing_path, destination_path, correction_plan, config)
+        scrub_docx_metadata(destination_path, str(config.get("docx_commenter_name", "AI Reviewer")))
         return
 
     if output_type == "hybrid":
         apply_hybrid_correction_plan(processing_path, destination_path, correction_plan, config)
+        scrub_docx_metadata(destination_path, str(config.get("docx_commenter_name", "AI Reviewer")))
         return
 
     raise ValueError(f"Unsupported output type: {output_type}")
@@ -227,6 +307,7 @@ def process_files(
     output_dir=None,
     cleanup_source_mhtml=False,
     should_cancel=None,
+    use_cached_plans=False,
 ):
     """Process a list of source files using the shared correction-plan pipeline."""
     def _raise_if_canceled():
@@ -250,10 +331,18 @@ def process_files(
     canceled_error = None
 
     print(f"Selected output types: {format_output_types(selected_output_types)}")
+    if use_cached_plans:
+        print("AI stage: skipped (using cached correction plans)")
 
     # Check if this is a course-level summary request (handles all files at once, not per-file)
     active_prompt_key = config.get("active_prompt", DEFAULT_PROMPT_KEY)
     output_mode = get_prompt_output_mode(active_prompt_key)
+
+    if use_cached_plans and output_mode == "course_summary":
+        raise RuntimeError(
+            "Cached-output mode only supports correction-plan prompts. "
+            "Course summary prompts require a fresh AI run."
+        )
     
     if output_mode == "course_summary":
         print("\n--- Running Course Summary Analysis (Folder-Level) ---")
@@ -281,6 +370,7 @@ def process_files(
                 # Save course summary as standalone file in the output directory
                 summary_output_path = output_dir / "Course_Summary.docx"
                 save_course_summary(str(summary_output_path), course_summary_text)
+                scrub_docx_metadata(str(summary_output_path), str(config.get("docx_commenter_name", "AI Reviewer")))
                 
                 run_totals["totalInputTokens"] = stats["total_input_tokens"]
                 run_totals["totalTokensGenerated"] = stats["total_tokens_generated"]
@@ -388,9 +478,14 @@ def process_files(
                     output_mode = get_prompt_output_mode(active_prompt_key)
                     prompt_abbr = get_prompt_abbreviation(active_prompt_key, fallback="GEN")
                     output_stem = build_output_stem(file_path)
-                    processing_client = _worker_client()
+                    processing_client = _worker_client() if not use_cached_plans else None
 
                     if output_mode == "prepend_text":
+                        if use_cached_plans:
+                            raise RuntimeError(
+                                "Cached-output mode only supports correction-plan prompts. "
+                                "Prepend-text prompts require a fresh AI run."
+                            )
                         prepend_text, stats = build_prepend_plan(
                             str(processing_file_path),
                             config,
@@ -399,19 +494,59 @@ def process_files(
                         if prepend_text:
                             output_path = output_dir / f"{output_stem}_{prompt_abbr}.docx"
                             apply_prepend_plan(str(processing_file_path), str(output_path), prepend_text)
+                            scrub_docx_metadata(str(output_path), str(config.get("docx_commenter_name", "AI Reviewer")))
                             successful_output_types = ["prepend_text"]
                         else:
                             print("  [!] Summary generation returned empty text. Skipping output.")
                             successful_output_types = []
                         correction_summary = {"correctionCount": 0, "categoryCounts": {}}
                     else:
-                        correction_plan, stats = build_correction_plan(
-                            str(processing_file_path),
-                            config,
-                            processing_client,
-                            should_cancel=_raise_if_canceled,
-                        )
+                        if use_cached_plans:
+                            cache_payload, cache_error = _load_correction_plan_cache(
+                                output_dir,
+                                active_prompt_key,
+                                file_path,
+                            )
+                            if cache_error:
+                                print(f"  [!] {cache_error}")
+                                print(f"      Skipping file: {file_path.name}")
+                                return None
+                            correction_plan = cache_payload.get("correctionPlan", [])
+                            stats = {
+                                "total_text_size": int(
+                                    ((cache_payload.get("summary") or {}).get("totalTextSize", 0))
+                                    or _estimate_plan_text_size(correction_plan)
+                                ),
+                                "total_input_tokens": 0,
+                                "total_tokens_generated": 0,
+                                "total_llm_time": 0.0,
+                            }
+                        else:
+                            correction_plan, stats = build_correction_plan(
+                                str(processing_file_path),
+                                config,
+                                processing_client,
+                                should_cancel=_raise_if_canceled,
+                            )
                         correction_summary = summarize_correction_plan(correction_plan)
+
+                        if not use_cached_plans:
+                            try:
+                                cache_path = _save_correction_plan_cache(
+                                    output_dir,
+                                    active_prompt_key,
+                                    file_path,
+                                    source_type,
+                                    correction_plan,
+                                    correction_summary,
+                                )
+                                print(
+                                    "  -> Saved AI correction cache: "
+                                    f"{format_path_for_display(cache_path, workspace_dir)}"
+                                )
+                            except Exception as cache_error:
+                                print(f"  [!] Could not save AI correction cache: {cache_error}")
+
                         successful_output_types = []
 
                         for output_type in selected_output_types:
@@ -570,6 +705,7 @@ def process_files(
         }
         try:
             summary_artifacts = update_summary_report(output_dir, run_record)
+            scrub_docx_metadata(str(summary_artifacts["reportPath"]), str(config.get("docx_commenter_name", "AI Reviewer")))
             print(f"Summary report updated: {summary_artifacts['reportPath'].name}")
         except Exception as e:
             print(f"  [!] Could not update summary report: {e}")

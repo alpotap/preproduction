@@ -150,7 +150,7 @@ Response fields:
 - outputFile
 - outputRelativePath
 
-### GET /api/processable-files?folder=<name>
+### GET /api/processable-files?folder=<name>&taskType=<type>
 
 Lists processable files (`.docx`, `.mhtml`, `.pdf`) for one input folder.
 
@@ -161,6 +161,16 @@ Response fields:
   - sizeBytes
   - modifiedAt
 
+When `taskType=render_cached`, `files[]` returns cache run entries (one per source file + prompt key):
+- sourceName
+- promptKey
+- promptName
+- selectionValue (token used in `selectedFiles` for `/api/jobs`)
+- cacheReady
+- cacheStatus (`ready` | `stale` | `missing_source`)
+- cacheSavedAt
+- correctionCount
+
 ## Job Endpoints
 
 ### POST /api/jobs
@@ -168,7 +178,7 @@ Response fields:
 Enqueues a new job.
 
 Request body:
-- taskType: process | download_process | consistency
+- taskType: process | download_process | render_cached | consistency
 - folder: string
 - promptKey: string | null
 - outputTypes: string[] | null
@@ -181,6 +191,9 @@ Response fields:
 
 Processing side effects:
 - For process/download_process jobs, the service also updates `output/<folder>/summary_report_state.json` and `output/<folder>/summary_report.docx` from execution statistics.
+- For process/download_process jobs, the service saves a prompt-scoped AI cache per file under `output/<folder>/.ai_cache/<promptKey>/<sourceFileName>.json`.
+- For render_cached jobs, the service skips LLM calls and renders selected output types from the saved cache when source signature and prompt key match.
+- Generated DOCX outputs are metadata-scrubbed after render; traceable source/environment fields are removed, and commenter identity is normalized to configured runtime commenter name.
 - Job submission persists prompt/output/notification defaults, and reads advanced runtime/provider-model settings from `config.yaml` at enqueue time.
 - For download_process jobs, processing is limited to newly added files for that run (for Wizard usage: files created by URL downloads); pre-existing processable files in the folder are excluded unless explicitly selected via API.
 - Terminal punctuation suppression strings are file-driven from `terminal_punctuation_suppress_strings.txt` and are not set per-job via API.

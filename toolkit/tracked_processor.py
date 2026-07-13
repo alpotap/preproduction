@@ -1,17 +1,21 @@
 """Applies shared correction plans to DOCX files using Microsoft Word Track Changes."""
 
 import difflib
+import zipfile
 import pythoncom
 import win32com.client as win32
+from lxml import etree
 
 from toolkit.document_processor import build_correction_plan
 from toolkit.document_processor import _normalize_for_matching
 from toolkit.document_processor import _filter_comment_explanation
 from toolkit.utils import build_text_match_index, find_indexed_text_match
+from toolkit.docx_metadata import scrub_docx_metadata
 
 
 WD_FIND_STOP = 0
 MAX_FIND_TEXT_LENGTH = 240
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def _clean_paragraph_text(text):
@@ -194,6 +198,45 @@ def _apply_correction_to_paragraph(
     return True
 
 
+def _normalize_track_changes_authors(docx_path, commenter_name, commenter_initials):
+    """Rewrite author/initials fields in WordprocessingML to configured commenter identity."""
+    with zipfile.ZipFile(docx_path, "r") as source_zip:
+        file_map = {name: source_zip.read(name) for name in source_zip.namelist()}
+
+    changed_files: set[str] = set()
+    author_attr = f"{{{_W_NS}}}author"
+    initials_attr = f"{{{_W_NS}}}initials"
+
+    for name, content in list(file_map.items()):
+        if not (name.startswith("word/") and name.endswith(".xml")):
+            continue
+        try:
+            root = etree.fromstring(content)
+        except Exception:
+            continue
+
+        changed = False
+        for element in root.iter():
+            if author_attr in element.attrib and element.attrib.get(author_attr) != commenter_name:
+                element.attrib[author_attr] = commenter_name
+                changed = True
+            if name == "word/comments.xml" and initials_attr in element.attrib:
+                if element.attrib.get(initials_attr) != commenter_initials:
+                    element.attrib[initials_attr] = commenter_initials
+                    changed = True
+
+        if changed:
+            file_map[name] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            changed_files.add(name)
+
+    if not changed_files:
+        return
+
+    with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as target_zip:
+        for name, content in file_map.items():
+            target_zip.writestr(name, content)
+
+
 def process_docx_tracked_with_plan(input_path, output_path, correction_plan, config):
     """Apply a precomputed correction plan to a DOCX using Track Changes and comments."""
     print(f"Loading document with Track Changes mode: {input_path}")
@@ -202,9 +245,31 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
     word = win32.DispatchEx("Word.Application")
     word.Visible = False
     doc = None
+    commenter_name = str(config.get("docx_commenter_name", "AI Reviewer") or "AI Reviewer").strip()
+    commenter_initials = ''.join(part[0].upper() for part in commenter_name.split() if part)[:3] or 'AI'
+
+    def _apply_word_author_identity(target_word, target_doc=None):
+        try:
+            target_word.UserName = commenter_name
+            target_word.UserInitials = commenter_initials
+        except Exception:
+            pass
+        if target_doc is None:
+            return
+        try:
+            target_doc.BuiltInDocumentProperties("Author").Value = commenter_name
+        except Exception:
+            pass
+        try:
+            target_doc.BuiltInDocumentProperties("Last Author").Value = commenter_name
+        except Exception:
+            pass
 
     try:
+        _apply_word_author_identity(word)
+
         doc = word.Documents.Open(input_path)
+        _apply_word_author_identity(word, doc)
         doc.TrackRevisions = True
 
         word_paragraphs = _collect_all_paragraphs_from_docx(doc)
@@ -281,6 +346,14 @@ def process_docx_tracked_with_plan(input_path, output_path, correction_plan, con
                 )
 
         doc.SaveAs(output_path, FileFormat=12)
+        try:
+            doc.Close(False)
+        except Exception:
+            pass
+        doc = None
+
+        _normalize_track_changes_authors(output_path, commenter_name, commenter_initials)
+        scrub_docx_metadata(output_path, commenter_name)
         print(f"\nSuccessfully saved tracked DOCX to: {output_path}")
     finally:
         if doc is not None:

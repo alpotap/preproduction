@@ -83,19 +83,26 @@ Step-by-step job submission:
 
 1. Select task type (process, download+process).
 	- Consistency analysis is selected through Prompt selection (for example from Document Analysis prompts), not as a separate task type.
+	- **Generate outputs from saved AI run** reuses cached AI correction plans from prior process/download runs for the same prompt and source file.
 2. Choose or create an input folder.
 	- Task, input folder, and new-folder creation controls are aligned in one row on desktop and stack automatically on narrow screens.
 	- The Files To Process list shows each eligible file in a single full-width row with file size and last processed timestamp.
-	- In **Process existing files**, you can drag and drop files directly into the Files To Process section to upload them into the selected input folder.
+	- In **Process existing files** and **Generate outputs from saved AI run**, you can drag and drop files directly into the Files To Process section to upload them into the selected input folder.
 	- The Files To Process section shows an inline tip for drag-and-drop upload.
 3. Paste URLs to download (for download tasks).
 	- URL controls are shown only when task type is **Download and process**.
 	- In **Download and process**, the job processes newly downloaded files from the provided URLs and ignores pre-existing files in the folder.
-4. Choose prompt and output types.
+4. For **Generate outputs from saved AI run**, select files that were previously processed with the same prompt.
+	- The job does not call the model.
+	- If the source file changed since cache creation, the file is skipped and must be processed again.
+	- The selector lists one entry per cached run type (prompt) for each source file, so the same source can appear multiple times.
+	- Use **All runs** on a source row to select every cached run type for that source in one click.
+	- The selector shows cache-ready run entries only.
+5. Choose prompt and output types.
 	- Advanced runtime controls are read from `config.yaml` at queue time.
 	- Prompt Category and Prompt selectors are shown side-by-side on desktop.
 	- Output Types are displayed in a horizontal row with responsive wrapping when space is limited.
-5. Click **Add Job To Queue**.
+6. Click **Add Job To Queue**.
 
 	- Correction behavior follows shared runtime configuration in `readme.md`; `AI Only Corrections: true` keeps output strictly model-provided.
 	- Objective guardrails still remove invalid terminal punctuation appends such as `?.`, `!.`, and `:.`.
@@ -195,7 +202,8 @@ Notes:
 
 - **Provider shows no models in wizard** — Ensure Ollama or LM Studio server is running, or Azure AI Foundry env vars are set. Run `python setup_foundry_env.py --scan-models` to refresh `config.yaml` catalog.
 - **Azure AI Foundry model calls fail for gpt-4o-mini** — Set `AZURE_AI_FOUNDRY_ENDPOINT` to `https://<resource>.cognitiveservices.azure.com/` and set `AZURE_AI_FOUNDRY_API_VERSION` to a compatible preview (for example `2025-01-01-preview`).
-- **No files appear in file selection** — File selection is shown for **Process Existing Files** task type. Switch task type to process existing files, then choose the input folder.
+- **No files appear in file selection** — File selection is shown for **Process Existing Files** and **Generate outputs from saved AI run**. Switch to one of these task types, then choose the input folder.
+- **Cached run generation skips files** — The selected prompt must match the cached prompt, and the source file must be unchanged since the cached AI run. Re-run **Process existing files** to refresh cache when needed.
 - **MHTML conversion fails with CoInitialize error** — This was a background-thread COM issue. It is fixed in `convert.py` (v1.1+). Restart the server after pulling the latest code.
 - **Job stuck as queued** — Worker thread may have crashed. Restart the server; queued jobs will be restored from history.
 - **Generate ZIP returns 400** — No files in the selected folder. Switch scope/folder or upload first.

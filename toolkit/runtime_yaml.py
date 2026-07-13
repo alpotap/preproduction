@@ -47,6 +47,9 @@ DEFAULT_CONFIG_YAML: dict = {
         "files": {
             "max_parallel_files": 1,
         },
+        "docx": {
+            "commenter_name": "AI Reviewer",
+        },
     },
 }
 
@@ -74,6 +77,13 @@ def _sanitize_int(value, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _sanitize_commenter_name(value, default: str = "AI Reviewer") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return default
+    return text[:80]
 
 
 def _sanitize_provider_models(models: list[dict]) -> list[dict]:
@@ -122,6 +132,7 @@ def _sanitize_config_yaml(payload: dict) -> dict:
     runtime = merged.setdefault("runtime", {})
     llm_runtime = runtime.setdefault("llm", {})
     files_runtime = runtime.setdefault("files", {})
+    docx_runtime = runtime.setdefault("docx", {})
     llm_runtime["max_passes"] = _sanitize_int(llm_runtime.get("max_passes", 1), default=1, minimum=1, maximum=5)
     llm_runtime["max_concurrent_requests"] = _sanitize_int(
         llm_runtime.get("max_concurrent_requests", 3),
@@ -135,6 +146,7 @@ def _sanitize_config_yaml(payload: dict) -> dict:
         minimum=1,
         maximum=8,
     )
+    docx_runtime["commenter_name"] = _sanitize_commenter_name(docx_runtime.get("commenter_name", "AI Reviewer"))
     return merged
 
 
@@ -278,6 +290,7 @@ def apply_runtime_yaml_overrides(config: dict, runtime_yaml: dict | None = None)
     runtime = payload.get("runtime", {}) if isinstance(payload, dict) else {}
     llm_runtime = runtime.get("llm", {}) if isinstance(runtime, dict) else {}
     files_runtime = runtime.get("files", {}) if isinstance(runtime, dict) else {}
+    docx_runtime = runtime.get("docx", {}) if isinstance(runtime, dict) else {}
 
     merged["llm_max_passes"] = _sanitize_int(llm_runtime.get("max_passes", merged.get("llm_max_passes", 1)), 1, 1, 5)
     merged["llm_max_concurrent_requests"] = _sanitize_int(
@@ -291,6 +304,9 @@ def apply_runtime_yaml_overrides(config: dict, runtime_yaml: dict | None = None)
         1,
         1,
         8,
+    )
+    merged["docx_commenter_name"] = _sanitize_commenter_name(
+        docx_runtime.get("commenter_name", merged.get("docx_commenter_name", "AI Reviewer"))
     )
 
     llm_section = payload.get("llm", {}) if isinstance(payload, dict) else {}

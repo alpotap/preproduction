@@ -24,6 +24,7 @@ from toolkit.engine import (
 )
 from toolkit.llm_service import get_llm_request_runtime_telemetry
 from toolkit.web_tools import download_url_as_mhtml
+from toolkit.runtime_yaml import load_runtime_yaml, apply_runtime_yaml_overrides
 
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 INPUT_DIR = get_input_root()
@@ -38,6 +39,30 @@ HIDDEN_OUTPUT_ARTIFACTS = (
     PERFORMANCE_LOG_PATH,
     JOB_HISTORY_PATH,
 )
+RENDER_CACHE_PREFIX = "cache"
+
+
+def _parse_render_cached_selections(tokens: list[str]) -> list[tuple[str, str]]:
+    """Parse selection tokens into (source_file_name, prompt_key) tuples."""
+    parsed: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for token in tokens or []:
+        raw = str(token or "").strip()
+        if not raw:
+            continue
+        parts = raw.split("::", 2)
+        if len(parts) != 3 or parts[0] != RENDER_CACHE_PREFIX:
+            continue
+        prompt_key = parts[1].strip()
+        source_name = Path(parts[2].strip()).name
+        if not prompt_key or not source_name:
+            continue
+        spec = (source_name, prompt_key)
+        if spec in seen:
+            continue
+        seen.add(spec)
+        parsed.append(spec)
+    return parsed
 
 
 @dataclass
@@ -366,16 +391,82 @@ class JobQueueManager:
         output_dir = OUTPUT_DIR / folder
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        config = hydrate_runtime_config(load_config())
+        runtime_yaml = load_runtime_yaml()
+        config = apply_runtime_yaml_overrides(hydrate_runtime_config(load_config()), runtime_yaml)
         self._apply_job_overrides(config, options)
 
         writer = _TeeLogWriter(self, job_id)
         with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+            raw_selected = [str(name).strip() for name in options.get("selectedFiles", []) if str(name).strip()]
+            selected_names = set(raw_selected)
+
+            if task_type == "render_cached":
+                selected_specs = _parse_render_cached_selections(raw_selected)
+                if not selected_specs:
+                    raise RuntimeError(
+                        "Select at least one cached run entry for Generate outputs from saved AI run."
+                    )
+
+                processable_by_name = {
+                    path.name: path
+                    for path in list_processable_files(source_dir)
+                }
+                runnable_specs: list[tuple[Path, str]] = []
+                for source_name, prompt_key in selected_specs:
+                    source_path = processable_by_name.get(source_name)
+                    if source_path is None:
+                        continue
+                    runnable_specs.append((source_path, prompt_key))
+
+                self._set_job_state(job_id, processed_files=len(runnable_specs))
+                if not runnable_specs:
+                    raise RuntimeError(
+                        f"No selected files found in input/{folder}. Refresh files and try again."
+                    )
+
+                self.record_line(job_id, f"Generating outputs from cached AI plans for {len(runnable_specs)} selected run(s)")
+
+                correction_count = 0
+                total_input_tokens = 0
+                total_tokens_generated = 0
+                for source_path, prompt_key in runnable_specs:
+                    self._raise_if_cancel_requested(job_id)
+                    self.record_line(
+                        job_id,
+                        f"Rendering from cache: {source_path.name} (prompt={prompt_key})",
+                    )
+                    run_config = dict(config)
+                    run_config["active_prompt"] = prompt_key
+                    run_result = process_files(
+                        [source_path],
+                        run_config,
+                        None,
+                        WORKSPACE_DIR,
+                        output_dir=output_dir,
+                        cleanup_source_mhtml=False,
+                        should_cancel=lambda: self._cancel_requested(job_id),
+                        use_cached_plans=True,
+                    )
+                    correction_count += int((run_result or {}).get("correctionCount", 0) or 0)
+                    total_input_tokens += int((run_result or {}).get("totalInputTokens", 0) or 0)
+                    total_tokens_generated += int((run_result or {}).get("totalTokensGenerated", 0) or 0)
+
+                total_tokens = total_input_tokens + total_tokens_generated
+
+                output_count = sum(1 for path in output_dir.rglob("*") if path.is_file())
+                self._set_job_state(
+                    job_id,
+                    output_count=output_count,
+                    correction_count=correction_count,
+                    total_input_tokens=total_input_tokens,
+                    total_tokens_generated=total_tokens_generated,
+                    total_tokens=total_tokens,
+                )
+                return
+
             self.record_line(job_id, f"Initializing client for provider {config['llm_provider']}")
             self._raise_if_cancel_requested(job_id)
             client = initialize_client_for_config(config)
-
-            selected_names = {str(name).strip() for name in options.get("selectedFiles", []) if str(name).strip()}
 
             if task_type == "download_process":
                 files_before = {path.name for path in list_processable_files(source_dir)}

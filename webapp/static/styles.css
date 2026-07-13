@@ -451,6 +451,32 @@ textarea {
   white-space: nowrap;
 }
 
+.selectable-file-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+}
+
+.selectable-file-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.selectable-file-group-title {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.selectable-file-group-action {
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  min-height: 22px;
+}
+
 .checkbox-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -788,5 +814,9 @@ textarea {
     grid-row: auto;
     text-align: left;
     white-space: normal;
+  }
+
+  .selectable-file-group-header {
+    flex-wrap: wrap;
   }
 }

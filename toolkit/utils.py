@@ -208,6 +208,7 @@ def load_config():
         'ai_only_corrections': True,
         'retry_on_empty_corrections': True,
         'notify_terminal_punctuation': True,
+        'docx_commenter_name': 'AI Reviewer',
     }
     readme_path = WORKSPACE_ROOT / 'readme.md'
     if not readme_path.exists():

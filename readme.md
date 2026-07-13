@@ -94,6 +94,8 @@ Example output location:
 output\0123\
 ```
 
+Web jobs also keep prompt-scoped AI correction caches under `output/<folder>/.ai_cache/` so you can regenerate additional output formats later without re-running the AI stage.
+
 ## What Runs What
 
 - [process.py](process.py): interactive CLI entrypoint.
@@ -116,6 +118,9 @@ Runtime keys in `config.yaml`:
 - `runtime.llm.max_passes` (`1` to `5`)
 - `runtime.llm.max_concurrent_requests` (`1` to `20`)
 - `runtime.files.max_parallel_files` (`1` to `8`)
+- `runtime.docx.commenter_name` (used as the retained commenter identity in output metadata)
+
+Output DOCX files are scrubbed after generation to remove source, machine, Office-account, and tool fingerprint metadata. The retained identity field is the configured commenter name.
 
 ## Providers
 
@@ -197,7 +202,7 @@ LM Studio Base URL: http://127.0.0.1:1234/v1
 LM Studio Model Name:
 LLM Temperature: 0.1
 LLM Max Tokens: 8000
-Output Types: inline, uncommented
+Output Types: track_changes, hybrid
 AI Only Corrections: true
 Retry On Empty Corrections: true
 

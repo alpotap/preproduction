@@ -50,6 +50,8 @@ APP_TITLE = "Document Correction Toolkit"
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 STATIC_DIR = WORKSPACE_DIR / "webapp" / "static"
 HIDDEN_OUTPUT_FILENAMES = {"summary_report_state.json"}
+HIDDEN_OUTPUT_DIRNAMES = {".ai_cache"}
+RENDER_CACHE_PREFIX = "cache"
 
 app = FastAPI(title=APP_TITLE)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -64,7 +66,7 @@ class CreateFolderRequest(BaseModel):
 
 
 class EnqueueJobRequest(BaseModel):
-    taskType: Literal["process", "download_process", "consistency"]
+    taskType: Literal["process", "download_process", "render_cached", "consistency"]
     folder: str
     promptKey: str | None = None
     outputTypes: list[str] | None = None
@@ -137,7 +139,10 @@ def _build_prompt_details(prompt_definition: dict) -> str:
 
 @app.get("/")
 def serve_index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/capabilities")
@@ -305,11 +310,17 @@ def list_files(
 
 
 @app.get("/api/processable-files")
-def list_processable_input_files(folder: str = Query(...)) -> dict:
+def list_processable_input_files(
+    folder: str = Query(...),
+    taskType: Literal["process", "download_process", "render_cached", "consistency"] = Query("process"),
+) -> dict:
     folder_name = _validate_folder_name(folder)
     target_dir = INPUT_DIR / folder_name
     if not target_dir.exists() or not target_dir.is_dir():
         return {"files": []}
+
+    if taskType == "render_cached":
+        return {"files": _list_render_cached_entries(folder_name)}
 
     last_processed_map = _load_last_processed_map(folder_name)
 
@@ -355,9 +366,13 @@ def download_directory_zip(
 
     files = []
     for path in target_dir.iterdir():
+        if scope == "output" and path.name in HIDDEN_OUTPUT_DIRNAMES:
+            continue
         if not path.is_file():
             continue
         if scope == "output" and path.name in HIDDEN_OUTPUT_FILENAMES:
+            continue
+        if scope == "output" and ".ai_cache" in path.name:
             continue
         # Avoid self-nesting/recursive growth when archiving output folders.
         if scope == "output" and path.suffix.lower() == ".zip":
@@ -392,11 +407,18 @@ def enqueue_job(payload: EnqueueJobRequest) -> dict:
     folder = _validate_folder_name(payload.folder)
     selected_output_types = normalize_output_types(payload.outputTypes or [])
     selected_files = []
-    for name in payload.selectedFiles or []:
-        file_name = Path(str(name or "").strip()).name
-        if not file_name or file_name != str(name).strip():
-            continue
-        selected_files.append(file_name)
+    if payload.taskType == "render_cached":
+        for token in payload.selectedFiles or []:
+            raw_token = str(token or "").strip()
+            if not raw_token:
+                continue
+            selected_files.append(raw_token)
+    else:
+        for name in payload.selectedFiles or []:
+            file_name = Path(str(name or "").strip()).name
+            if not file_name or file_name != str(name).strip():
+                continue
+            selected_files.append(file_name)
 
     runtime_yaml = load_runtime_yaml()
     yaml_overrides = apply_runtime_yaml_overrides({}, runtime_yaml)
@@ -764,6 +786,81 @@ def _load_last_processed_map(folder_name: str) -> dict[str, str]:
             if name and name not in last_processed:
                 last_processed[name] = timestamp
     return last_processed
+
+
+def _build_current_source_signature(source_path: Path) -> dict[str, int]:
+    stat = source_path.stat()
+    return {
+        "sizeBytes": int(stat.st_size),
+        "mtimeNs": int(stat.st_mtime_ns),
+    }
+
+
+def _encode_render_cache_selection_token(prompt_key: str, source_name: str) -> str:
+    return f"{RENDER_CACHE_PREFIX}::{prompt_key}::{source_name}"
+
+
+def _list_render_cached_entries(folder_name: str) -> list[dict]:
+    input_dir = INPUT_DIR / folder_name
+    cache_root = OUTPUT_DIR / folder_name / ".ai_cache"
+    if not cache_root.exists() or not cache_root.is_dir():
+        return []
+
+    prompt_defs = get_selectable_prompt_definitions()
+    last_processed_map = _load_last_processed_map(folder_name)
+    entries: list[dict] = []
+
+    for prompt_dir in sorted(path for path in cache_root.iterdir() if path.is_dir()):
+        prompt_key = prompt_dir.name
+        prompt_meta = prompt_defs.get(prompt_key, {})
+        prompt_name = str(prompt_meta.get("name") or prompt_key)
+        for cache_file in sorted(path for path in prompt_dir.iterdir() if path.is_file() and path.suffix.lower() == ".json"):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as file_handle:
+                    payload = json.load(file_handle)
+            except Exception:
+                continue
+
+            source_name = str(payload.get("sourceFileName") or cache_file.stem).strip()
+            if not source_name:
+                continue
+
+            source_path = input_dir / source_name
+            source_exists = source_path.exists() and source_path.is_file()
+            cache_ready = False
+            cache_status = "missing_source"
+            if source_exists:
+                cached_signature = payload.get("sourceSignature") if isinstance(payload.get("sourceSignature"), dict) else {}
+                cache_ready = cached_signature == _build_current_source_signature(source_path)
+                cache_status = "ready" if cache_ready else "stale"
+
+            summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+            correction_count = int(summary.get("correctionCount", 0) or 0)
+            selection_value = _encode_render_cache_selection_token(prompt_key, source_name)
+
+            entries.append(
+                {
+                    "name": source_name,
+                    "sourceName": source_name,
+                    "promptKey": prompt_key,
+                    "promptName": prompt_name,
+                    "selectionValue": selection_value,
+                    "cacheReady": cache_ready,
+                    "cacheStatus": cache_status,
+                    "cacheSavedAt": payload.get("savedAt"),
+                    "lastProcessedAt": last_processed_map.get(source_name),
+                    "correctionCount": correction_count,
+                }
+            )
+
+    entries.sort(
+        key=lambda item: (
+            item.get("sourceName", "").lower(),
+            item.get("promptName", "").lower(),
+            item.get("promptKey", "").lower(),
+        )
+    )
+    return entries
 
 
 def _safe_extract_zip(zip_path: Path, target_dir: Path) -> None:
